@@ -4,20 +4,25 @@ REGISTRY ?= ghcr.io/containdk
 IMAGE_NAME ?= talos-zpool-extension
 TAG ?= $(shell git rev-parse --short HEAD || echo "latest")
 IMAGE_URL = $(REGISTRY)/$(IMAGE_NAME)
+PLATFORMS ?= linux/amd64,linux/arm64
 
 .PHONY: all build push clean
 
 all: build
 
+# Build for the local host platform and load into the local Docker daemon
 build:
-	@echo "Building extension image: $(IMAGE_URL):$(TAG)"
-	@docker build -t $(IMAGE_URL):$(TAG) .
-	@docker tag $(IMAGE_URL):$(TAG) $(IMAGE_URL):latest
+	@echo "Building extension image for local platform: $(IMAGE_URL):$(TAG)"
+	docker buildx build --load -t $(IMAGE_URL):$(TAG) .
+	docker tag $(IMAGE_URL):$(TAG) $(IMAGE_URL):latest
 
+# Build and push the multi-platform manifest for both amd64 and arm64
 push:
-	@echo "Pushing extension image: $(IMAGE_URL):$(TAG) and :latest"
-	@docker push $(IMAGE_URL):$(TAG)
-	@docker push $(IMAGE_URL):latest
+	@echo "Building and pushing extension image for $(PLATFORMS)"
+	docker buildx build --platform $(PLATFORMS) \
+		-t $(IMAGE_URL):$(TAG) \
+		-t $(IMAGE_URL):latest \
+		--push .
 
 clean:
 	@echo "Removing local images..."
