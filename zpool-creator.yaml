@@ -1,7 +1,10 @@
 name: zpool-creator
-# depends:
-#   - service: zfs
-#   - configuration: true
+depends:
+  - service: udevd
+  - service: cri
+  - path: /dev/zfs
+  - service: zfs
+  - configuration: true
 container:
   entrypoint: /create-zpool
   # partly from https://github.com/siderolabs/extensions/blob/main/storage/zfs/zfs-service.yaml
