@@ -3,7 +3,7 @@ depends:
   - service: udevd
   - service: cri
   - path: /dev/zfs
-  - service: zfs
+  - service: ext-zfs-service
   - configuration: true
 container:
   entrypoint: /create-zpool
