@@ -7,6 +7,8 @@ depends:
   - configuration: true
 container:
   entrypoint: /create-zpool
+  environment:
+    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
   # partly from https://github.com/siderolabs/extensions/blob/main/storage/zfs/zfs-service.yaml
   mounts:
     - source: /usr/bin
