@@ -16,7 +16,7 @@ func main() {
 
 	// Check if zpool is available in PATH
 	if _, err := exec.LookPath("zpool"); err != nil {
-		slog.Error("zpool command not found in PATH. Make sure the ZFS extension is installed.", "error", err)
+		slog.Error("zpool command not found in PATH. Make sure the ZFS extension is installed.", "error", err, "path", os.Getenv("PATH"))
 		os.Exit(1)
 	}
 
