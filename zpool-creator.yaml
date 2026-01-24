@@ -64,5 +64,7 @@ container:
         - rshared
         - rbind
         - rw
+  security:
+    rootfsPropagation: shared
 restart: untilSuccess
 logToConsole: true
