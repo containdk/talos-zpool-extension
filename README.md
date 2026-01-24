@@ -45,27 +45,48 @@ docker run -t --rm -v .:/work --privileged ghcr.io/siderolabs/imager:v1.12.1 \
 
 #### 2. Configure the Service
 
-Once the node is running with the extension, configure it by applying an `ExtensionServiceConfig` document. This is where you specify which disks to use for the pool.
+Once the node is running with the extension, configure it by applying an `ExtensionServiceConfig` document. This is where you specify the pools to create using indexed environment variables.
 
+The extension will look for `ZPOOL_NAME_0`, `ZPOOL_NAME_1`, and so on, creating a pool for each index it finds. If one pool fails, the extension will log the error and continue to the next. It will exit with an error only after attempting all configurations.
+
+**Example: Create two pools**
 ```yaml
 apiVersion: v1alpha1
 kind: ExtensionServiceConfig
 name: zpool-creator
 environment:
-  - ZPOOL_NAME=csi
-  - ZPOOL_DISKS=/dev/sdb /dev/sdc
-  - ZPOOL_TYPE=mirror
+  # First pool: a mirrored tank
+  - ZPOOL_NAME_0=tank
+  - ZPOOL_DISKS_0=/dev/sdb /dev/sdc
+  - ZPOOL_TYPE_0=mirror
+  - ASHIFT_0=12
+
+  # Second pool: a single-disk pool
+  - ZPOOL_NAME_1=data
+  - ZPOOL_DISKS_1=/dev/sdd
+
+  # Global ASHIFT fallback (used if ASHIFT_n is not set for a pool)
   - ASHIFT=12
 ```
 
 ### Configuration Variables
 
+The extension is configured by defining one or more pools using indexed environment variables. The process starts at index `0` and continues as long as a `ZPOOL_NAME_<n>` is found.
+
+For each pool `n` (e.g., `0`, `1`, `2`, ...), the following variables are used:
+
+| Variable | Required? | Description |
+| :--- | :--- | :--- |
+| `ZPOOL_NAME_<n>` | **Yes** | The name of the ZFS pool to create (e.g., `ZPOOL_NAME_0=tank`). |
+| `ZPOOL_DISKS_<n>` | **Yes** | A space-separated list of block devices (e.g., `ZPOOL_DISKS_0=/dev/sdb /dev/sdc`). |
+| `ZPOOL_TYPE_<n>` | No | The vdev type (`mirror`, `raidz`, etc.). If empty, disks are added as individual vdevs. |
+| `ASHIFT_<n>` | No | The `ashift` value for this specific pool. If not set, it falls back to the global `ASHIFT` value. |
+
+A global `ASHIFT` can also be set as a default for all pools.
+
 | Variable | Default | Description |
 | :--- | :--- | :--- |
-| `ZPOOL_NAME` | `tank` | The name of the ZFS pool to create. |
-| `ZPOOL_DISKS` | (Required) | A space-separated list of block devices (e.g., `/dev/sdb /dev/sdc`). |
-| `ZPOOL_TYPE` | (Optional) | The vdev type (e.g., `mirror`, `raidz`, `raidz2`). If empty, disks are added as individual vdevs. |
-| `ASHIFT` | `12` | The ashift value for the pool. |
+| `ASHIFT` | `12` | The global `ashift` value to use if a pool-specific `ASHIFT_<n>` is not defined. |
 
 ## Development
 
