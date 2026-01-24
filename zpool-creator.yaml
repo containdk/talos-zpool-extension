@@ -35,6 +35,13 @@ container:
       options:
         - rbind
         - ro
+    - source: /var/mnt
+      destination: /var/mnt
+      type: bind
+      options:
+        - rshared
+        - rbind
+        - rw
     - source: /dev
       destination: /dev
       type: bind
