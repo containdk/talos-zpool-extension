@@ -32,32 +32,31 @@ make push
 
 ### Talos Configuration
 
-To use this extension, add it to your machine configuration and provide the necessary parameters via `ExtensionServiceConfig`.
+#### 1. Add the Extension
 
-1.  **Add the Extension**:
+System extensions should be included at image creation time using the Talos `imager` tool. Use the `--system-extension-image` flag to include this extension and the required ZFS extension.
 
-    ```yaml
-    machine:
-      extensions:
-        - image: ghcr.io/containdk/talos-zpool-extension:latest
-    ```
+```sh
+docker run -t --rm -v .:/work --privileged ghcr.io/siderolabs/imager:v1.12.1 \
+  iso \
+  --system-extension-image ghcr.io/siderolabs/zfs:2.4.0-v1.12.1 \
+  --system-extension-image ghcr.io/containdk/talos-zpool-extension:latest
+```
 
-2.  **Configure the Service**:
+#### 2. Configure the Service
 
-    Use a `cluster.extraManifests` or apply a manual manifest to define the `ExtensionServiceConfig`. This is where you specify which disks to use for the pool.
+Once the node is running with the extension, configure it by applying an `ExtensionServiceConfig` document. This is where you specify which disks to use for the pool.
 
-    ```yaml
-    apiVersion: v1alpha1
-    kind: ExtensionServiceConfig
-    metadata:
-        name: zpool-creator
-    spec:
-        environment:
-            - ZPOOL_NAME=csi
-            - ZPOOL_DISKS=/dev/sdb /dev/sdc
-            - ZPOOL_TYPE=mirror
-            - ASHIFT=12
-    ```
+```yaml
+apiVersion: v1alpha1
+kind: ExtensionServiceConfig
+name: zpool-creator
+environment:
+  - ZPOOL_NAME=csi
+  - ZPOOL_DISKS=/dev/sdb /dev/sdc
+  - ZPOOL_TYPE=mirror
+  - ASHIFT=12
+```
 
 ### Configuration Variables
 
