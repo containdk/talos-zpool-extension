@@ -2,7 +2,7 @@
 
 REGISTRY ?= ghcr.io/containdk
 IMAGE_NAME ?= talos-zpool-extension
-TAG ?= $(shell git rev-parse --short HEAD || echo "latest")
+TAG ?= $(shell git describe --tags --always --dirty || echo "latest")
 IMAGE_URL = $(REGISTRY)/$(IMAGE_NAME)
 PLATFORMS ?= linux/amd64,linux/arm64
 
