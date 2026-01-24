@@ -66,7 +66,7 @@ func main() {
 	}
 	args = append(args, disksToUse...)
 
-	cmd := exec.Command("zpool", args...)
+	cmd := exec.Command("/usr/local/sbin/zpool", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -79,7 +79,7 @@ func main() {
 	slog.Info("ZFS pool created successfully", "pool", zpoolName)
 
 	// Show status
-	statusCmd := exec.Command("zpool", "status", zpoolName)
+	statusCmd := exec.Command("/usr/local/sbin/zpool", "status", zpoolName)
 	statusCmd.Stdout = os.Stdout
 	statusCmd.Stderr = os.Stderr
 	_ = statusCmd.Run()
@@ -95,7 +95,7 @@ func getEnv(key, fallback string) string {
 }
 
 func poolExists(name string) bool {
-	cmd := exec.Command("zpool", "list", name)
+	cmd := exec.Command("/usr/local/sbin/zpool", "list", name)
 	return cmd.Run() == nil
 }
 
