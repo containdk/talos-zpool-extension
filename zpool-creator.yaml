@@ -8,57 +8,17 @@ depends:
 container:
   entrypoint: /create-zpool
   environment:
-    - PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-  # partly from https://github.com/siderolabs/extensions/blob/main/storage/zfs/zfs-service.yaml
+    - PATH=/host/usr/local/sbin:/host/usr/local/bin:/host/usr/sbin:/host/usr/bin
+    - LD_LIBRARY_PATH=/host/usr/lib:/host/lib
   mounts:
-    - source: /usr/bin
-      destination: /usr/bin
+    - source: /
+      destination: /host
       type: bind
       options:
-        - bind
-        - ro
-    # ld-musl-x86_64.so.1
-    - source: /lib
-      destination: /lib
-      type: bind
-      options:
-        - bind
-        - ro
-    # libcrypto.so and libc.so
-    - source: /usr/lib
-      destination: /usr/lib
-      type: bind
-      options:
-        - bind
-        - ro
-    - source: /usr/local/lib
-      destination: /usr/local/lib
-      type: bind
-      options:
-        - bind
-        - ro
-    - source: /usr/local/sbin
-      destination: /usr/local/sbin
-      type: bind
-      options:
-        - bind
+        - rbind
         - ro
     - source: /dev
       destination: /dev
-      type: bind
-      options:
-        - rshared
-        - rbind
-        - rw
-    - source: /run
-      destination: /run
-      type: bind
-      options:
-        - rshared
-        - rbind
-        - rw
-    - source: /var
-      destination: /var
       type: bind
       options:
         - rshared

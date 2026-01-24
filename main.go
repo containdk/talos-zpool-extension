@@ -1,11 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
 )
+
+const zpoolPath = "/host/usr/local/sbin/zpool"
 
 func main() {
 	// Initialize slog with text handler for Talos console output
@@ -15,8 +18,8 @@ func main() {
 	slog.Info("Talos ZFS Pool Extension: Starting ZFS Pool Creation")
 
 	// Check if zpool is available in PATH
-	if _, err := exec.LookPath("zpool"); err != nil {
-		slog.Error("zpool command not found in PATH. Make sure the ZFS extension is installed.", "error", err, "path", os.Getenv("PATH"))
+	if _, err := os.Stat(zpoolPath); err != nil {
+		slog.Error(fmt.Sprintf("zpool binary not found at %s", zpoolPath), "error", err)
 		os.Exit(1)
 	}
 
@@ -66,7 +69,7 @@ func main() {
 	}
 	args = append(args, disksToUse...)
 
-	cmd := exec.Command("/usr/local/sbin/zpool", args...)
+	cmd := exec.Command(zpoolPath, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -79,7 +82,7 @@ func main() {
 	slog.Info("ZFS pool created successfully", "pool", zpoolName)
 
 	// Show status
-	statusCmd := exec.Command("/usr/local/sbin/zpool", "status", zpoolName)
+	statusCmd := exec.Command(zpoolPath, "status", zpoolName)
 	statusCmd.Stdout = os.Stdout
 	statusCmd.Stderr = os.Stderr
 	_ = statusCmd.Run()
@@ -95,7 +98,7 @@ func getEnv(key, fallback string) string {
 }
 
 func poolExists(name string) bool {
-	cmd := exec.Command("/usr/local/sbin/zpool", "list", name)
+	cmd := exec.Command(zpoolPath, "list", name)
 	return cmd.Run() == nil
 }
 
