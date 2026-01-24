@@ -1,7 +1,7 @@
 version: v1alpha1
 metadata:
   name: zpool-creator
-  version: "0.2.10-v1.12.1"
+  version: "0.2.12-v1.12.1"
   author: KimNorgaard
   description: |
     [extra] This system extension provides a service to create zpools on boot.

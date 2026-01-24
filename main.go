@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-const zpoolPath = "/host/usr/local/sbin/zpool"
+const zpoolPath = "/usr/local/sbin/zpool"
 
 func main() {
 	// Initialize slog with text handler for Talos console output

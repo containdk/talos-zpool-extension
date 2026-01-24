@@ -9,11 +9,28 @@ depends:
 container:
   entrypoint: /create-zpool
   environment:
-    - PATH=/host/usr/local/sbin:/host/usr/local/bin:/host/usr/sbin:/host/usr/bin
-    - LD_LIBRARY_PATH=/host/usr/lib:/host/lib
+    - PATH=/usr/local/sbin
   mounts:
-    - source: /
-      destination: /host
+    - source: /usr/local/sbin/zpool
+      destination: /usr/local/sbin/zpool
+      type: bind
+      options:
+        - rbind
+        - ro
+    - source: /usr/local/lib
+      destination: /usr/local/lib
+      type: bind
+      options:
+        - rbind
+        - ro
+    - source: /usr/lib
+      destination: /usr/lib
+      type: bind
+      options:
+        - rbind
+        - ro
+    - source: /lib
+      destination: /lib
       type: bind
       options:
         - rbind
@@ -25,7 +42,5 @@ container:
         - rshared
         - rbind
         - rw
-  security:
-    rootfsPropagation: shared
 restart: untilSuccess
 logToConsole: true
