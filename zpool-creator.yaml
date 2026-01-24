@@ -4,6 +4,7 @@ depends:
   - service: cri
   - path: /dev/zfs
   - service: ext-zfs-service
+  - path: /usr/local/sbin/zpool
   - configuration: true
 container:
   entrypoint: /create-zpool
