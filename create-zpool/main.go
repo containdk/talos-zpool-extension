@@ -1,117 +1,177 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
-const defaultPoolName = "tank"
+const (
+	defaultPoolName = "tank"
+	defaultAshift   = "12"
+)
 
-// Global variable for zpool path to be used by helper functions.
-var zpoolPath string
+// PoolConfig holds the configuration for a single ZFS pool.
+type PoolConfig struct {
+	Name   string
+	Type   string
+	Disks  []string
+	Ashift string
+}
 
 func main() {
-	// Initialize slog with text handler for Talos console output
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
 	slog.Info("Talos ZFS Pool Extension: Starting ZFS Pool Creation")
 
-	// Find zpool binary in PATH
-	var err error
-	zpoolPath, err = exec.LookPath("zpool")
+	provider := &LiveZFSProvider{}
+
+	zpoolPath, err := provider.LookPath("zpool")
 	if err != nil {
 		slog.Error("zpool binary not found in PATH", "error", err)
 		os.Exit(1)
 	}
 	slog.Info("Found zpool binary", "path", zpoolPath)
 
-	// 1. Get configuration from environment variables
-	zpoolName := getEnv("ZPOOL_NAME", defaultPoolName)
-	zpoolType := os.Getenv("ZPOOL_TYPE")
-	zpoolDisksStr := os.Getenv("ZPOOL_DISKS")
-	ashift := getEnv("ASHIFT", "12")
-
-	// 2. Validate inputs for security
-	if !isValidZpoolName(zpoolName) {
-		slog.Error("Invalid ZPOOL_NAME. See zpool-create(8) for naming rules. Name must start with a letter, contain valid characters (alphanumeric, '_', '-', '.', ':', ' '), and not be a reserved word.", "name", zpoolName)
-		os.Exit(1)
-	}
-	if !isValidZpoolType(zpoolType) {
-		slog.Error("Invalid ZPOOL_TYPE. If specified, must be one of mirror, raidz, raidz1, raidz2, raidz3, draid, draid1, draid2, draid3.", "type", zpoolType)
-		os.Exit(1)
-	}
-	if !isValidAshift(ashift) {
-		slog.Error("Invalid ASHIFT value. Must be an integer.", "ashift", ashift)
-		os.Exit(1)
-	}
-
-	if zpoolDisksStr == "" {
-		slog.Info("ZPOOL_DISKS is not set. No disks to process. Exiting cleanly.")
+	configs := parsePoolConfigs()
+	if len(configs) == 0 {
+		slog.Info("No pool configurations found (e.g., ZPOOL_NAME_0 is not set). Exiting cleanly.")
 		os.Exit(0)
 	}
 
-	zpoolDisks := strings.Fields(zpoolDisksStr)
-
-	// 3. Check if the pool already exists
-	if poolExists(zpoolName) {
-		slog.Info("ZFS pool already exists. Nothing to do.", "pool", zpoolName)
-		os.Exit(0)
+	var allErrors []error
+	for _, config := range configs {
+		slog.Info("Processing pool configuration", "pool", config.Name)
+		err := createPool(provider, zpoolPath, config)
+		if err != nil {
+			slog.Error("Failed to create pool", "pool", config.Name, "error", err)
+			allErrors = append(allErrors, fmt.Errorf("pool %q: %w", config.Name, err))
+			// Continue to the next pool
+		}
 	}
 
-	// 4. Probe for specified disks
-	slog.Info("Probing for specified disks", "disks", zpoolDisks)
+	if len(allErrors) > 0 {
+		slog.Error("One or more pools failed to create.", "error_count", len(allErrors))
+		for _, e := range allErrors {
+			slog.Error("Detailed error", "error", e)
+		}
+		os.Exit(1)
+	}
+
+	slog.Info("Talos ZFS Pool Extension: All pools processed successfully. Finished.")
+}
+
+// parsePoolConfigs reads indexed environment variables (ZPOOL_NAME_0, etc.)
+// and returns a slice of PoolConfig structs.
+func parsePoolConfigs() []PoolConfig {
+	var configs []PoolConfig
+	globalAshift := getEnv("ASHIFT", defaultAshift)
+
+	for i := 0; ; i++ {
+		poolNameKey := fmt.Sprintf("ZPOOL_NAME_%d", i)
+		poolName := os.Getenv(poolNameKey)
+
+		if poolName == "" {
+			// No more pools defined
+			break
+		}
+
+		poolDisksKey := fmt.Sprintf("ZPOOL_DISKS_%d", i)
+		poolDisksStr := os.Getenv(poolDisksKey)
+
+		poolTypeKey := fmt.Sprintf("ZPOOL_TYPE_%d", i)
+		poolType := os.Getenv(poolTypeKey)
+
+		poolAshiftKey := fmt.Sprintf("ASHIFT_%d", i)
+		ashift := getEnv(poolAshiftKey, globalAshift)
+
+		config := PoolConfig{
+			Name:   poolName,
+			Type:   poolType,
+			Disks:  strings.Fields(poolDisksStr),
+			Ashift: ashift,
+		}
+		configs = append(configs, config)
+	}
+	return configs
+}
+
+// createPool handles the logic for creating a single ZFS pool.
+func createPool(provider ZFSProvider, zpoolPath string, config PoolConfig) error {
+	// 1. Validate inputs
+	if !isValidZpoolName(config.Name) {
+		return fmt.Errorf("invalid name: %q", config.Name)
+	}
+	if !isValidZpoolType(config.Type) {
+		return fmt.Errorf("invalid type: %q", config.Type)
+	}
+	if !isValidAshift(config.Ashift) {
+		return fmt.Errorf("invalid ashift value: %q", config.Ashift)
+	}
+	if len(config.Disks) == 0 {
+		slog.Info("No disks specified for pool. Skipping.", "pool", config.Name)
+		return nil // Not a fatal error
+	}
+
+	// 2. Check if the pool already exists
+	if provider.PoolExists(config.Name, zpoolPath) {
+		slog.Info("ZFS pool already exists. Nothing to do.", "pool", config.Name)
+		return nil
+	}
+
+	// 3. Probe for specified disks
+	slog.Info("Probing for specified disks", "pool", config.Name, "disks", config.Disks)
 	var disksToUse []string
-	for _, disk := range zpoolDisks {
-		if isBlockDevice(disk) {
-			slog.Info("Found block device", "device", disk)
+	for _, disk := range config.Disks {
+		isBlock, err := provider.IsBlockDevice(disk)
+		if err != nil {
+			slog.Warn("Error checking device. Skipping.", "pool", config.Name, "device", disk, "error", err)
+			continue
+		}
+		if isBlock {
+			slog.Info("Found block device", "pool", config.Name, "device", disk)
 			disksToUse = append(disksToUse, disk)
 		} else {
-			slog.Warn("Device is not a block device or does not exist. Skipping.", "device", disk)
+			slog.Warn("Device is not a block device or does not exist. Skipping.", "pool", config.Name, "device", disk)
 		}
 	}
 
 	if len(disksToUse) == 0 {
-		slog.Info("No usable disks found from the list. Exiting cleanly.", "input_disks", zpoolDisksStr)
-		os.Exit(0)
+		return errors.New("no usable block devices found from the provided list")
 	}
 
-	// 5. Create ZFS pool
-	slog.Info("Creating ZFS pool", "pool", zpoolName, "ashift", ashift)
+	// 4. Create ZFS pool
+	slog.Info("Creating ZFS pool", "pool", config.Name, "ashift", config.Ashift, "type", config.Type)
 
-	args := []string{"create", "-m", "/var/mnt/" + zpoolName, "-o", "ashift=" + ashift, zpoolName}
-	if zpoolType != "" {
-		slog.Info("Using zpool type", "type", zpoolType)
-		args = append(args, zpoolType)
+	args := []string{"create", "-m", "/var/mnt/" + config.Name, "-o", "ashift=" + config.Ashift, config.Name}
+	if config.Type != "" {
+		args = append(args, config.Type)
 	}
 	args = append(args, disksToUse...)
 
-	cmd := exec.Command(zpoolPath, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	slog.Info("Running zpool command", "pool", config.Name, "args", strings.Join(args, " "))
+	output, err := provider.CreatePool(zpoolPath, args)
+	if err != nil {
+		return fmt.Errorf("zpool create command failed: %w. Output: %s", err, string(output))
+	}
+	slog.Info("Zpool create command output", "pool", config.Name, "output", string(output))
+	slog.Info("ZFS pool created successfully", "pool", config.Name)
 
-	slog.Info("Running zpool command", "args", strings.Join(args, " "))
-	if err := cmd.Run(); err != nil {
-		slog.Error("Failed to create ZFS pool", "error", err, "pool", zpoolName)
-		os.Exit(1)
+	// 5. Show status
+	slog.Info("Showing pool status", "pool", config.Name)
+	statusOutput, err := provider.GetPoolStatus(config.Name, zpoolPath)
+	if err != nil {
+		slog.Warn("Failed to show pool status, but pool may have been created.", "pool", config.Name, "error", err, "output", string(statusOutput))
+	} else {
+		slog.Info("Zpool status", "pool", config.Name, "status", string(statusOutput))
 	}
 
-	slog.Info("ZFS pool created successfully", "pool", zpoolName)
-
-	// Show status
-	slog.Info("Showing pool status", "pool", zpoolName)
-	statusCmd := exec.Command(zpoolPath, "status", zpoolName)
-	statusCmd.Stdout = os.Stdout
-	statusCmd.Stderr = os.Stderr
-	if err := statusCmd.Run(); err != nil {
-		slog.Warn("Failed to show pool status. The pool might have been created but something is wrong.", "error", err, "pool", zpoolName)
-	}
-
-	slog.Info("Talos ZFS Pool Extension: Finished")
+	return nil
 }
 
 func getEnv(key, fallback string) string {
@@ -119,21 +179,6 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
-}
-
-func poolExists(name string) bool {
-	// Assumes zpoolPath has been set in main()
-	cmd := exec.Command(zpoolPath, "list", name)
-	return cmd.Run() == nil
-}
-
-func isBlockDevice(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	// Check if it's a block device
-	return info.Mode()&os.ModeDevice != 0 && info.Mode()&os.ModeCharDevice == 0
 }
 
 // isValidZpoolName checks if the pool name is valid according to zpool(8).
