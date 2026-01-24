@@ -62,7 +62,7 @@ environment:
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
-| `ZPOOL_NAME` | `csi` | The name of the ZFS pool to create. |
+| `ZPOOL_NAME` | `tank` | The name of the ZFS pool to create. |
 | `ZPOOL_DISKS` | (Required) | A space-separated list of block devices (e.g., `/dev/sdb /dev/sdc`). |
 | `ZPOOL_TYPE` | (Optional) | The vdev type (e.g., `mirror`, `raidz`, `raidz2`). If empty, disks are added as individual vdevs. |
 | `ASHIFT` | `12` | The ashift value for the pool. |
@@ -70,7 +70,8 @@ environment:
 ## Development
 
 The creator is written in Go to ensure compatibility with the Talos environment. 
+The source code and its Go module files are located in the `create-zpool/` directory.
 
-- `main.go`: The source code for the creator binary.
+- `create-zpool/main.go`: The source code for the creator binary.
 - `zpool-creator.yaml`: The Talos service definition.
 - `Dockerfile`: The multi-stage build definition.

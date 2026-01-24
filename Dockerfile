@@ -4,9 +4,8 @@ FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
 # Set the working directory
 WORKDIR /src
 
-# Leverage Docker cache by copying dependency files first (if any existed, e.g., go.mod)
-# For now, we only have main.go
-COPY main.go .
+# Leverage Docker cache by copying dependency files first
+COPY create-zpool/ .
 
 # Arguments provided by Docker Buildx for cross-compilation
 ARG TARGETOS
