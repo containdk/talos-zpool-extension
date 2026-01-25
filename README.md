@@ -80,13 +80,13 @@ For each pool `n` (e.g., `0`, `1`, `2`, ...), the following variables are used:
 | `ZPOOL_NAME_<n>` | **Yes** | The name of the ZFS pool to create (e.g., `ZPOOL_NAME_0=tank`). |
 | `ZPOOL_DISKS_<n>` | **Yes** | A space-separated list of block devices (e.g., `ZPOOL_DISKS_0=/dev/sdb /dev/sdc`). |
 | `ZPOOL_TYPE_<n>` | No | The vdev type (`mirror`, `raidz`, etc.). If empty, disks are added as individual vdevs. |
-| `ASHIFT_<n>` | No | The `ashift` value for this specific pool. If not set, it falls back to the global `ASHIFT` value. |
+| `ZPOOL_ASHIFT_<n>` | No | The `ashift` value for this specific pool. If not set, it falls back to the global `ZPOOL_ASHIFT` value. |
 
-A global `ASHIFT` can also be set as a default for all pools.
+A global `ZPOOL_ASHIFT` can also be set as a default for all pools.
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
-| `ASHIFT` | `12` | The global `ashift` value to use if a pool-specific `ASHIFT_<n>` is not defined. |
+| `ZPOOL_ASHIFT` | `12` | The global `ashift` value to use if a pool-specific `ZPOOL_ASHIFT_<n>` is not defined. |
 
 ## Development
 

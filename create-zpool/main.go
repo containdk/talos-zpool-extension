@@ -70,7 +70,7 @@ func main() {
 // and returns a slice of PoolConfig structs.
 func parsePoolConfigs() []PoolConfig {
 	var configs []PoolConfig
-	globalAshift := getEnv("ASHIFT", defaultAshift)
+	globalAshift := getEnv("ZPOOL_ASHIFT", defaultAshift)
 
 	for i := range MaxPools {
 		poolNameKey := fmt.Sprintf("ZPOOL_NAME_%d", i)
@@ -87,7 +87,7 @@ func parsePoolConfigs() []PoolConfig {
 		poolTypeKey := fmt.Sprintf("ZPOOL_TYPE_%d", i)
 		poolType := os.Getenv(poolTypeKey)
 
-		poolAshiftKey := fmt.Sprintf("ASHIFT_%d", i)
+		poolAshiftKey := fmt.Sprintf("ZPOOL_ASHIFT_%d", i)
 		ashift := getEnv(poolAshiftKey, globalAshift)
 
 		config := PoolConfig{
@@ -99,6 +99,7 @@ func parsePoolConfigs() []PoolConfig {
 		configs = append(configs, config)
 	}
 
+	// After the loop, check if the reason for stopping was hitting the limit.
 	if os.Getenv(fmt.Sprintf("ZPOOL_NAME_%d", MaxPools)) != "" {
 		slog.Warn("Reached the maximum number of pools allowed, ignoring further configurations.", "limit", MaxPools)
 	}

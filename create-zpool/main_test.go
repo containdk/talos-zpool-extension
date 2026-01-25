@@ -176,21 +176,21 @@ func TestParsePoolConfigs(t *testing.T) {
 	os.Setenv("ZPOOL_NAME_0", "tank0")
 	os.Setenv("ZPOOL_DISKS_0", "/dev/sda /dev/sdb")
 	os.Setenv("ZPOOL_TYPE_0", "mirror")
-	os.Setenv("ASHIFT_0", "13")
+	os.Setenv("ZPOOL_ASHIFT_0", "13")
 	os.Setenv("ZPOOL_NAME_1", "tank1")
 	os.Setenv("ZPOOL_DISKS_1", "/dev/sdc")
 	// ZPOOL_TYPE_1 is intentionally omitted
-	os.Setenv("ASHIFT", "12") // Global ashift
+	os.Setenv("ZPOOL_ASHIFT", "12") // Global ashift
 
 	// Clean up env vars after test
 	defer func() {
 		os.Unsetenv("ZPOOL_NAME_0")
 		os.Unsetenv("ZPOOL_DISKS_0")
 		os.Unsetenv("ZPOOL_TYPE_0")
-		os.Unsetenv("ASHIFT_0")
+		os.Unsetenv("ZPOOL_ASHIFT_0")
 		os.Unsetenv("ZPOOL_NAME_1")
 		os.Unsetenv("ZPOOL_DISKS_1")
-		os.Unsetenv("ASHIFT")
+		os.Unsetenv("ZPOOL_ASHIFT")
 	}()
 
 	configs := parsePoolConfigs()
