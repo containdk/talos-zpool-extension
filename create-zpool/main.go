@@ -17,10 +17,10 @@ const (
 
 // PoolConfig holds the configuration for a single ZFS pool.
 type PoolConfig struct {
-	Name   string
-	Type   string
-	Disks  []string
-	Ashift string
+	Name   string   // Name of the ZFS pool (e.g., "tank").
+	Type   string   // Type of the vdev (e.g., "mirror", "raidz", "draid"). Can be empty for single-disk vdevs.
+	Disks  []string // List of disk paths or device nodes to be used in the pool (e.g., "/dev/sda", "/dev/sdb").
+	Ashift string   // ashift property for the pool, specifying the sector size alignment (e.g., "12" for 4K).
 }
 
 func main() {
