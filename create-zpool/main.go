@@ -33,7 +33,7 @@ func main() {
 
 	zpoolPath, err := provider.LookPath("zpool")
 	if err != nil {
-		slog.Error("zpool binary not found in PATH", "error", err)
+		slog.Error("zpool binary not found in PATH", "error", err, "PATH", os.Getenv("PATH"))
 		os.Exit(1)
 	}
 	slog.Info("Found zpool binary", "path", zpoolPath)
