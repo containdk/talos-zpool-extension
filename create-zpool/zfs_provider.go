@@ -8,10 +8,17 @@ import (
 // ZFSProvider defines an interface for interacting with ZFS and the filesystem,
 // allowing for mocking in tests.
 type ZFSProvider interface {
+	// LookPath searches for a binary in the system's PATH.
 	LookPath(file string) (string, error)
+	// PoolExists checks if a ZFS pool with the given name already exists.
 	PoolExists(name, zpoolPath string) bool
+	// CreatePool executes the `zpool create` command with the given arguments.
+	// It returns the combined stdout/stderr output and any execution error.
 	CreatePool(zpoolPath string, args []string) ([]byte, error)
+	// GetPoolStatus executes the `zpool status` command for the given pool.
+	// It returns the combined stdout/stderr output and any execution error.
 	GetPoolStatus(name, zpoolPath string) ([]byte, error)
+	// IsBlockDevice checks if the given path corresponds to a block device.
 	IsBlockDevice(path string) (bool, error)
 }
 
@@ -31,13 +38,13 @@ func (p *LiveZFSProvider) PoolExists(name, zpoolPath string) bool {
 	return cmd.Run() == nil
 }
 
-// CreatePool executes the `zpool create` command.
+// CreatePool creates a zpool using the `zpool create` command.
 func (p *LiveZFSProvider) CreatePool(zpoolPath string, args []string) ([]byte, error) {
 	cmd := exec.Command(zpoolPath, args...)
 	return cmd.CombinedOutput()
 }
 
-// GetPoolStatus executes the `zpool status` command.
+// GetPoolStatus returns the status of a ZFS pool using the `zpool status` command.
 func (p *LiveZFSProvider) GetPoolStatus(name, zpoolPath string) ([]byte, error) {
 	cmd := exec.Command(zpoolPath, "status", name)
 	return cmd.CombinedOutput()
