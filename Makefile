@@ -13,7 +13,7 @@ FULL_VERSION = $(VERSION)-$(TALOS_VERSION)
 
 IMAGE_URL = $(REGISTRY)/$(IMAGE_NAME)
 
-.PHONY: all build push clean check-git-clean check-release-tag
+.PHONY: all build push clean test check-git-clean check-release-tag
 
 all: build
 
@@ -28,7 +28,7 @@ build: check-git-clean
 		.
 
 # Build and push the multi-platform manifest for both amd64 and arm64
-push: check-git-clean check-release-tag
+push: test check-git-clean check-release-tag
 	@echo "Building and pushing extension image for $(PLATFORMS) as $(IMAGE_URL):$(FULL_VERSION)"
 	docker buildx build --platform $(PLATFORMS) \
 		--build-arg VERSION=$(VERSION) \
@@ -37,9 +37,21 @@ push: check-git-clean check-release-tag
 		-t $(IMAGE_URL):latest \
 		--push .
 
-# ==============
-# = Build Checks
-# ==============
+# =================
+# = Quality Gates
+# =================
+test:
+	@echo "--> Running Go static analysis and tests..."
+	@echo "    Checking formatting..."
+	@if [ -n "$(shell cd create-zpool && go fmt ./...)" ]; then \
+		echo "Go formatting issues found. Please run 'go fmt ./create-zpool/...'"; \
+		exit 1; \
+	fi
+	@echo "    Running go vet..."
+	(cd create-zpool && go vet .)
+	@echo "    Running tests..."
+	(cd create-zpool && go test -v -race -coverprofile=coverage.out .)
+
 check-git-clean:
 	@if ! git diff-index --quiet HEAD --; then \
 		echo "Git working directory is dirty. Please commit or stash changes before building."; \

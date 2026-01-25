@@ -13,6 +13,7 @@ import (
 const (
 	defaultPoolName = "tank"
 	defaultAshift   = "12"
+	MaxPools        = 42 // Sanity limit for the number of pools to create.
 )
 
 // PoolConfig holds the configuration for a single ZFS pool.
@@ -71,12 +72,12 @@ func parsePoolConfigs() []PoolConfig {
 	var configs []PoolConfig
 	globalAshift := getEnv("ASHIFT", defaultAshift)
 
-	for i := 0; ; i++ {
+	for i := range MaxPools {
 		poolNameKey := fmt.Sprintf("ZPOOL_NAME_%d", i)
 		poolName := os.Getenv(poolNameKey)
 
 		if poolName == "" {
-			// No more pools defined
+			// This is the normal exit condition, no more pools are defined.
 			break
 		}
 
@@ -97,12 +98,17 @@ func parsePoolConfigs() []PoolConfig {
 		}
 		configs = append(configs, config)
 	}
+
+	if os.Getenv(fmt.Sprintf("ZPOOL_NAME_%d", MaxPools)) != "" {
+		slog.Warn("Reached the maximum number of pools allowed, ignoring further configurations.", "limit", MaxPools)
+	}
+
 	return configs
 }
 
 // createPool handles the logic for creating a single ZFS pool.
 func createPool(provider ZFSProvider, zpoolPath string, config PoolConfig) error {
-	// 1. Validate inputs
+	// Validate inputs
 	if !isValidZpoolName(config.Name) {
 		return fmt.Errorf("invalid name: %q", config.Name)
 	}
@@ -114,16 +120,16 @@ func createPool(provider ZFSProvider, zpoolPath string, config PoolConfig) error
 	}
 	if len(config.Disks) == 0 {
 		slog.Info("No disks specified for pool. Skipping.", "pool", config.Name)
-		return nil // Not a fatal error
+		return nil
 	}
 
-	// 2. Check if the pool already exists
+	// Check if the pool already exists
 	if provider.PoolExists(config.Name, zpoolPath) {
 		slog.Info("ZFS pool already exists. Nothing to do.", "pool", config.Name)
 		return nil
 	}
 
-	// 3. Probe for specified disks
+	// Probe for specified disks
 	slog.Info("Probing for specified disks", "pool", config.Name, "disks", config.Disks)
 	var disksToUse []string
 	for _, disk := range config.Disks {
@@ -144,7 +150,7 @@ func createPool(provider ZFSProvider, zpoolPath string, config PoolConfig) error
 		return errors.New("no usable block devices found from the provided list")
 	}
 
-	// 4. Create ZFS pool
+	// Create ZFS pool
 	slog.Info("Creating ZFS pool", "pool", config.Name, "ashift", config.Ashift, "type", config.Type)
 
 	args := []string{"create", "-m", "/var/mnt/" + config.Name, "-o", "ashift=" + config.Ashift, config.Name}
@@ -161,7 +167,7 @@ func createPool(provider ZFSProvider, zpoolPath string, config PoolConfig) error
 	slog.Info("Zpool create command output", "pool", config.Name, "output", string(output))
 	slog.Info("ZFS pool created successfully", "pool", config.Name)
 
-	// 5. Show status
+	// Show status
 	slog.Info("Showing pool status", "pool", config.Name)
 	statusOutput, err := provider.GetPoolStatus(config.Name, zpoolPath)
 	if err != nil {
@@ -190,13 +196,13 @@ func isValidZpoolName(name string) bool {
 		return false
 	}
 
-	// 1. Check for valid characters
+	// Check for valid characters
 	match, _ := regexp.MatchString(`^[a-zA-Z][a-zA-Z0-9_.: -]*$`, name)
 	if !match {
 		return false
 	}
 
-	// 2. Check for reserved names
+	// Check for reserved names
 	reservedNames := map[string]bool{
 		"mirror": true,
 		"raidz":  true,
@@ -208,7 +214,7 @@ func isValidZpoolName(name string) bool {
 		return false
 	}
 
-	// 3. Check for reserved prefixes
+	// Check for reserved prefixes
 	reservedPrefixes := []string{"mirror", "raidz", "draid", "spare"}
 	for _, prefix := range reservedPrefixes {
 		if strings.HasPrefix(name, prefix) {

@@ -8,10 +8,7 @@ import (
 	"testing"
 )
 
-// --- Mock ZFSProvider ---
-
 type MockZFSProvider struct {
-	// Configurable fields to control mock behavior
 	LookPathFunc      func(file string) (string, error)
 	PoolExistsFunc    func(name, zpoolPath string) bool
 	CreatePoolFunc    func(zpoolPath string, args []string) ([]byte, error)
@@ -23,35 +20,35 @@ func (m *MockZFSProvider) LookPath(file string) (string, error) {
 	if m.LookPathFunc != nil {
 		return m.LookPathFunc(file)
 	}
-	return "/fake/zpool", nil // Default success
+	return "/fake/zpool", nil
 }
 
 func (m *MockZFSProvider) PoolExists(name, zpoolPath string) bool {
 	if m.PoolExistsFunc != nil {
 		return m.PoolExistsFunc(name, zpoolPath)
 	}
-	return false // Default to pool not existing
+	return false
 }
 
 func (m *MockZFSProvider) CreatePool(zpoolPath string, args []string) ([]byte, error) {
 	if m.CreatePoolFunc != nil {
 		return m.CreatePoolFunc(zpoolPath, args)
 	}
-	return []byte("Pool created successfully"), nil // Default success
+	return []byte("Pool created successfully"), nil
 }
 
 func (m *MockZFSProvider) GetPoolStatus(name, zpoolPath string) ([]byte, error) {
 	if m.GetPoolStatusFunc != nil {
 		return m.GetPoolStatusFunc(name, zpoolPath)
 	}
-	return []byte("Pool is online"), nil // Default success
+	return []byte("Pool is online"), nil
 }
 
 func (m *MockZFSProvider) IsBlockDevice(path string) (bool, error) {
 	if m.IsBlockDeviceFunc != nil {
 		return m.IsBlockDeviceFunc(path)
 	}
-	return true, nil // Default to path being a block device
+	return true, nil
 }
 
 // --- Unit Tests for Validation Functions ---
@@ -216,6 +213,31 @@ func TestParsePoolConfigs(t *testing.T) {
 	}
 	if len(configs[1].Disks) != 1 || configs[1].Disks[0] != "/dev/sdc" {
 		t.Errorf("config 1 disks are incorrect: got %v", configs[1].Disks)
+	}
+}
+
+func TestParsePoolConfigs_Limit(t *testing.T) {
+	// Set more environment variables than the MaxPools limit
+	for i := 0; i <= MaxPools; i++ {
+		os.Setenv(fmt.Sprintf("ZPOOL_NAME_%d", i), fmt.Sprintf("pool%d", i))
+	}
+	defer func() {
+		for i := 0; i <= MaxPools; i++ {
+			os.Unsetenv(fmt.Sprintf("ZPOOL_NAME_%d", i))
+		}
+	}()
+
+	configs := parsePoolConfigs()
+
+	if len(configs) != MaxPools {
+		t.Fatalf("parsePoolConfigs() returned %d configs, want %d (MaxPools limit)", len(configs), MaxPools)
+	}
+
+	// Check if the last parsed pool is the one just before the limit
+	expectedLastName := fmt.Sprintf("pool%d", MaxPools-1)
+	actualLastName := configs[MaxPools-1].Name
+	if actualLastName != expectedLastName {
+		t.Errorf("Last parsed pool name is incorrect: got %q, want %q", actualLastName, expectedLastName)
 	}
 }
 
