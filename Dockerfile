@@ -32,7 +32,7 @@ ARG TARGETARCH
 # Build the Go binary for the target architecture
 # CGO_ENABLED=0 ensures a static binary which is required for the scratch image
 RUN GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0 \
-    go build -ldflags="-s -w" -o create-zpool main.go
+    go build -ldflags="-s -w" -o create-zpool .
 
 # Final stage: minimal image
 FROM scratch
