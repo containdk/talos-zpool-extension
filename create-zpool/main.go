@@ -51,7 +51,6 @@ func main() {
 		if err != nil {
 			slog.Error("Failed to create pool", "pool", config.Name, "error", err)
 			allErrors = append(allErrors, fmt.Errorf("pool %q: %w", config.Name, err))
-			// Continue to the next pool
 		}
 	}
 
