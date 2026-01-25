@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-type MockZFSProvider struct {
+type mockZFSProvider struct {
 	LookPathFunc      func(file string) (string, error)
 	PoolExistsFunc    func(name, zpoolPath string) bool
 	CreatePoolFunc    func(zpoolPath string, args []string) ([]byte, error)
@@ -16,35 +16,35 @@ type MockZFSProvider struct {
 	IsBlockDeviceFunc func(path string) (bool, error)
 }
 
-func (m *MockZFSProvider) LookPath(file string) (string, error) {
+func (m *mockZFSProvider) LookPath(file string) (string, error) {
 	if m.LookPathFunc != nil {
 		return m.LookPathFunc(file)
 	}
 	return "/fake/zpool", nil
 }
 
-func (m *MockZFSProvider) PoolExists(name, zpoolPath string) bool {
+func (m *mockZFSProvider) PoolExists(name, zpoolPath string) bool {
 	if m.PoolExistsFunc != nil {
 		return m.PoolExistsFunc(name, zpoolPath)
 	}
 	return false
 }
 
-func (m *MockZFSProvider) CreatePool(zpoolPath string, args []string) ([]byte, error) {
+func (m *mockZFSProvider) CreatePool(zpoolPath string, args []string) ([]byte, error) {
 	if m.CreatePoolFunc != nil {
 		return m.CreatePoolFunc(zpoolPath, args)
 	}
 	return []byte("Pool created successfully"), nil
 }
 
-func (m *MockZFSProvider) GetPoolStatus(name, zpoolPath string) ([]byte, error) {
+func (m *mockZFSProvider) GetPoolStatus(name, zpoolPath string) ([]byte, error) {
 	if m.GetPoolStatusFunc != nil {
 		return m.GetPoolStatusFunc(name, zpoolPath)
 	}
 	return []byte("Pool is online"), nil
 }
 
-func (m *MockZFSProvider) IsBlockDevice(path string) (bool, error) {
+func (m *mockZFSProvider) IsBlockDevice(path string) (bool, error) {
 	if m.IsBlockDeviceFunc != nil {
 		return m.IsBlockDeviceFunc(path)
 	}
@@ -218,32 +218,32 @@ func TestParsePoolConfigs(t *testing.T) {
 
 func TestParsePoolConfigs_Limit(t *testing.T) {
 	// Set more environment variables than the MaxPools limit
-	for i := 0; i <= MaxPools; i++ {
+	for i := 0; i <= maxPools; i++ {
 		os.Setenv(fmt.Sprintf("ZPOOL_NAME_%d", i), fmt.Sprintf("pool%d", i))
 	}
 	defer func() {
-		for i := 0; i <= MaxPools; i++ {
+		for i := 0; i <= maxPools; i++ {
 			os.Unsetenv(fmt.Sprintf("ZPOOL_NAME_%d", i))
 		}
 	}()
 
 	configs := parsePoolConfigs()
 
-	if len(configs) != MaxPools {
-		t.Fatalf("parsePoolConfigs() returned %d configs, want %d (MaxPools limit)", len(configs), MaxPools)
+	if len(configs) != maxPools {
+		t.Fatalf("parsePoolConfigs() returned %d configs, want %d (MaxPools limit)", len(configs), maxPools)
 	}
 
 	// Check if the last parsed pool is the one just before the limit
-	expectedLastName := fmt.Sprintf("pool%d", MaxPools-1)
-	actualLastName := configs[MaxPools-1].Name
+	expectedLastName := fmt.Sprintf("pool%d", maxPools-1)
+	actualLastName := configs[maxPools-1].Name
 	if actualLastName != expectedLastName {
 		t.Errorf("Last parsed pool name is incorrect: got %q, want %q", actualLastName, expectedLastName)
 	}
 }
 
 func TestCreatePool_Success(t *testing.T) {
-	mockProvider := &MockZFSProvider{}
-	config := PoolConfig{
+	mockProvider := &mockZFSProvider{}
+	config := poolConfig{
 		Name:   "goodpool",
 		Type:   "mirror",
 		Disks:  []string{"/dev/sda", "/dev/sdb"},
@@ -257,7 +257,7 @@ func TestCreatePool_Success(t *testing.T) {
 }
 
 func TestCreatePool_PartialFailure(t *testing.T) {
-	mockProvider := &MockZFSProvider{
+	mockProvider := &mockZFSProvider{
 		CreatePoolFunc: func(zpoolPath string, args []string) ([]byte, error) {
 			// Fail only for a specific pool
 			if strings.Contains(strings.Join(args, " "), "badpool") {
@@ -267,7 +267,7 @@ func TestCreatePool_PartialFailure(t *testing.T) {
 		},
 	}
 
-	configs := []PoolConfig{
+	configs := []poolConfig{
 		{Name: "goodpool", Disks: []string{"/dev/sda"}, Ashift: "12"},
 		{Name: "badpool", Disks: []string{"/dev/sdb"}, Ashift: "12"},
 		{Name: "anothergoodpool", Disks: []string{"/dev/sdc"}, Ashift: "12"},
@@ -290,7 +290,7 @@ func TestCreatePool_PartialFailure(t *testing.T) {
 }
 
 func TestCreatePool_DiskNotBlockDevice(t *testing.T) {
-	mockProvider := &MockZFSProvider{
+	mockProvider := &mockZFSProvider{
 		IsBlockDeviceFunc: func(path string) (bool, error) {
 			if path == "/dev/sdb" {
 				return false, nil // This one is not a block device
@@ -298,7 +298,7 @@ func TestCreatePool_DiskNotBlockDevice(t *testing.T) {
 			return true, nil
 		},
 	}
-	config := PoolConfig{
+	config := poolConfig{
 		Name:   "testpool",
 		Disks:  []string{"/dev/sda", "/dev/sdb"},
 		Ashift: "12",

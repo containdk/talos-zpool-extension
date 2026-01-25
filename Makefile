@@ -18,7 +18,7 @@ IMAGE_URL = $(REGISTRY)/$(IMAGE_NAME)
 all: build
 
 # Build for the local host platform and load into the local Docker daemon
-build: check-git-clean
+build:
 	@echo "Building extension image for local platform: $(IMAGE_URL):$(FULL_VERSION)"
 	docker buildx build --load \
 		--build-arg VERSION=$(VERSION) \

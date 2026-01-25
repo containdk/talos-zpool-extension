@@ -13,11 +13,11 @@ import (
 const (
 	defaultPoolName = "tank"
 	defaultAshift   = "12"
-	MaxPools        = 42 // Sanity limit for the number of pools to create.
+	maxPools        = 42 // Sanity limit for the number of pools to create.
 )
 
-// PoolConfig holds the configuration for a single ZFS pool.
-type PoolConfig struct {
+// poolConfig holds the configuration for a single ZFS pool.
+type poolConfig struct {
 	Name   string   // Name of the ZFS pool (e.g., "tank").
 	Type   string   // Type of the vdev (e.g., "mirror", "raidz", "draid"). Can be empty for single-disk vdevs.
 	Disks  []string // List of disk paths or device nodes to be used in the pool (e.g., "/dev/sda", "/dev/sdb").
@@ -30,7 +30,7 @@ func main() {
 
 	slog.Info("Talos ZFS Pool Extension: Starting ZFS Pool Creation")
 
-	provider := &LiveZFSProvider{}
+	provider := &liveZFSProvider{}
 
 	zpoolPath, err := provider.LookPath("zpool")
 	if err != nil {
@@ -68,11 +68,11 @@ func main() {
 
 // parsePoolConfigs reads indexed environment variables (ZPOOL_NAME_0, etc.)
 // and returns a slice of PoolConfig structs.
-func parsePoolConfigs() []PoolConfig {
-	var configs []PoolConfig
+func parsePoolConfigs() []poolConfig {
+	var configs []poolConfig
 	globalAshift := getEnv("ZPOOL_ASHIFT", defaultAshift)
 
-	for i := range MaxPools {
+	for i := range maxPools {
 		poolNameKey := fmt.Sprintf("ZPOOL_NAME_%d", i)
 		poolName := os.Getenv(poolNameKey)
 
@@ -90,7 +90,7 @@ func parsePoolConfigs() []PoolConfig {
 		poolAshiftKey := fmt.Sprintf("ZPOOL_ASHIFT_%d", i)
 		ashift := getEnv(poolAshiftKey, globalAshift)
 
-		config := PoolConfig{
+		config := poolConfig{
 			Name:   poolName,
 			Type:   poolType,
 			Disks:  strings.Fields(poolDisksStr),
@@ -100,15 +100,15 @@ func parsePoolConfigs() []PoolConfig {
 	}
 
 	// After the loop, check if the reason for stopping was hitting the limit.
-	if os.Getenv(fmt.Sprintf("ZPOOL_NAME_%d", MaxPools)) != "" {
-		slog.Warn("Reached the maximum number of pools allowed, ignoring further configurations.", "limit", MaxPools)
+	if os.Getenv(fmt.Sprintf("ZPOOL_NAME_%d", maxPools)) != "" {
+		slog.Warn("Reached the maximum number of pools allowed, ignoring further configurations.", "limit", maxPools)
 	}
 
 	return configs
 }
 
 // createPool handles the logic for creating a single ZFS pool.
-func createPool(provider ZFSProvider, zpoolPath string, config PoolConfig) error {
+func createPool(provider zfsProvider, zpoolPath string, config poolConfig) error {
 	// Validate inputs
 	if !isValidZpoolName(config.Name) {
 		return fmt.Errorf("invalid name: %q", config.Name)

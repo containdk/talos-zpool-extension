@@ -5,9 +5,9 @@ import (
 	"os/exec"
 )
 
-// ZFSProvider defines an interface for interacting with ZFS and the filesystem,
+// zfsProvider defines an interface for interacting with ZFS and the filesystem,
 // allowing for mocking in tests.
-type ZFSProvider interface {
+type zfsProvider interface {
 	// LookPath searches for a binary in the system's PATH.
 	LookPath(file string) (string, error)
 	// PoolExists checks if a ZFS pool with the given name already exists.
@@ -22,36 +22,36 @@ type ZFSProvider interface {
 	IsBlockDevice(path string) (bool, error)
 }
 
-// LiveZFSProvider is the concrete implementation of ZFSProvider that executes
+// liveZFSProvider is the concrete implementation of ZFSProvider that executes
 // real commands and interacts with the live filesystem.
-type LiveZFSProvider struct{}
+type liveZFSProvider struct{}
 
 // LookPath wraps exec.LookPath.
-func (p *LiveZFSProvider) LookPath(file string) (string, error) {
+func (p *liveZFSProvider) LookPath(file string) (string, error) {
 	return exec.LookPath(file)
 }
 
 // PoolExists checks if a ZFS pool with the given name already exists.
-func (p *LiveZFSProvider) PoolExists(name, zpoolPath string) bool {
+func (p *liveZFSProvider) PoolExists(name, zpoolPath string) bool {
 	cmd := exec.Command(zpoolPath, "list", name)
 	// We only care if the command succeeds (exit code 0), not about its output.
 	return cmd.Run() == nil
 }
 
 // CreatePool creates a zpool using the `zpool create` command.
-func (p *LiveZFSProvider) CreatePool(zpoolPath string, args []string) ([]byte, error) {
+func (p *liveZFSProvider) CreatePool(zpoolPath string, args []string) ([]byte, error) {
 	cmd := exec.Command(zpoolPath, args...)
 	return cmd.CombinedOutput()
 }
 
 // GetPoolStatus returns the status of a ZFS pool using the `zpool status` command.
-func (p *LiveZFSProvider) GetPoolStatus(name, zpoolPath string) ([]byte, error) {
+func (p *liveZFSProvider) GetPoolStatus(name, zpoolPath string) ([]byte, error) {
 	cmd := exec.Command(zpoolPath, "status", name)
 	return cmd.CombinedOutput()
 }
 
 // IsBlockDevice checks if the given path corresponds to a block device.
-func (p *LiveZFSProvider) IsBlockDevice(path string) (bool, error) {
+func (p *liveZFSProvider) IsBlockDevice(path string) (bool, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return false, err
