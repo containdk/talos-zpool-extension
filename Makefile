@@ -5,7 +5,7 @@ IMAGE_NAME ?= talos-zpool-extension
 PLATFORMS ?= linux/amd64,linux/arm64
 
 # Default Talos version to build against. Can be overridden.
-TALOS_VERSION ?= v1.12.3
+TALOS_VERSION ?= v1.12.4
 # Get the latest git tag without the 'v' prefix for the application version.
 VERSION ?= $(shell git describe --tags --abbrev=0 | sed 's/^v//')
 # The full version string used for the manifest and image tag.
