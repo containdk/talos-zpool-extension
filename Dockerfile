@@ -19,7 +19,7 @@ metadata:
     [extra] This system extension provides a service to create zpools on boot.
   compatibility:
     talos:
-      version: ">= v1.12.0"
+      version: ">= v1.13.0"
 EOF
 
 # Leverage Docker cache by copying dependency files first

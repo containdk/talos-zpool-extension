@@ -52,9 +52,9 @@ System extensions should be included at image creation time using the Talos
 and the required ZFS extension.
 
 ```sh
-docker run -t --rm -v .:/work --privileged ghcr.io/siderolabs/imager:v1.12.4 \
+docker run -t --rm -v .:/work --privileged ghcr.io/siderolabs/imager:v1.13.0 \
   installer \
-  --system-extension-image ghcr.io/siderolabs/zfs:2.4.0-v1.12.4 \
+  --system-extension-image ghcr.io/siderolabs/zfs:2.4.0-v1.13.0 \
   --system-extension-image ghcr.io/containdk/talos-zpool-extension:latest
 ```
 
@@ -67,8 +67,8 @@ docker load -i installer-amd64.tar
 Once loaded, re-tag the image to match your registry and push it:
 
 ```sh
-docker tag ghcr.io/siderolabs/installer-base:v1.12.4 your-registry/talos-installer-image:v1.12.4
-docker push your-registry/talos-installer-image:v1.12.4
+docker tag ghcr.io/siderolabs/installer-base:v1.13.0 your-registry/talos-installer-image:v1.13.0
+docker push your-registry/talos-installer-image:v1.13.0
 ```
 
 Remember to match the talos versions.
