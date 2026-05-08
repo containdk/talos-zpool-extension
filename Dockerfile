@@ -1,5 +1,5 @@
 # Use a specific version of Go for stability
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine@sha256:f6751d823c26342f9506c03797d2527668d095b0a15f1862cddb4d927a7a4ced AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine@sha256:8d22e29d960bc50cd025d93d5b7c7d220b1ee9aa7a239b3c8f55a57e987e8d45 AS builder
 
 # Set the working directory
 WORKDIR /src
