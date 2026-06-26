@@ -4,16 +4,20 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 type mockZFSProvider struct {
-	LookPathFunc      func(file string) (string, error)
-	PoolExistsFunc    func(name, zpoolPath string) bool
-	CreatePoolFunc    func(zpoolPath string, args []string) ([]byte, error)
-	GetPoolStatusFunc func(name, zpoolPath string) ([]byte, error)
-	IsBlockDeviceFunc func(path string) (bool, error)
+	LookPathFunc           func(file string) (string, error)
+	PoolExistsFunc         func(name, zpoolPath string) bool
+	CreatePoolFunc         func(zpoolPath string, args []string) ([]byte, error)
+	GetPoolStatusFunc      func(name, zpoolPath string) ([]byte, error)
+	IsBlockDeviceFunc      func(path string) (bool, error)
+	ResolveDiskByModelFunc func(model string, sizeConds []sizeCondition, usedDisks map[string]bool) (string, error)
+	GetDiskSizeFunc        func(path string) (uint64, error)
+	EvalSymlinksFunc       func(path string) (string, error)
 }
 
 func (m *mockZFSProvider) LookPath(file string) (string, error) {
@@ -49,6 +53,29 @@ func (m *mockZFSProvider) IsBlockDevice(path string) (bool, error) {
 		return m.IsBlockDeviceFunc(path)
 	}
 	return true, nil
+}
+
+func (m *mockZFSProvider) ResolveDiskByModel(model string, sizeConds []sizeCondition, usedDisks map[string]bool) (string, error) {
+	if m.ResolveDiskByModelFunc != nil {
+		return m.ResolveDiskByModelFunc(model, sizeConds, usedDisks)
+	}
+	// Default mock: return a dummy path based on model name
+	return "/dev/fake-" + model, nil
+}
+
+func (m *mockZFSProvider) GetDiskSize(path string) (uint64, error) {
+	if m.GetDiskSizeFunc != nil {
+		return m.GetDiskSizeFunc(path)
+	}
+	// Default size is 1 TB (well within standard sizes)
+	return 1024 * 1024 * 1024 * 1024, nil
+}
+
+func (m *mockZFSProvider) EvalSymlinks(path string) (string, error) {
+	if m.EvalSymlinksFunc != nil {
+		return m.EvalSymlinksFunc(path)
+	}
+	return path, nil
 }
 
 // --- Unit Tests for Validation Functions ---
@@ -173,23 +200,30 @@ func FuzzIsValidZpoolName(f *testing.F) {
 
 func TestParsePoolConfigs(t *testing.T) {
 	// Set environment variables for the test
-	os.Setenv("ZPOOL_NAME_0", "tank0")
-	os.Setenv("ZPOOL_DISKS_0", "/dev/sda /dev/sdb")
-	os.Setenv("ZPOOL_TYPE_0", "mirror")
-	os.Setenv("ZPOOL_ASHIFT_0", "13")
-	os.Setenv("ZPOOL_NAME_1", "tank1")
-	os.Setenv("ZPOOL_DISKS_1", "/dev/sdc")
-	// ZPOOL_TYPE_1 is intentionally omitted
+	os.Setenv("ZPOOL_0_NAME", "tank0")
+	os.Setenv("ZPOOL_0_TYPE", "mirror")
+	os.Setenv("ZPOOL_0_ASHIFT", "13")
+	os.Setenv("ZPOOL_0_DISK_0_DEV", "/dev/sda")
+	os.Setenv("ZPOOL_0_DISK_1_DEV", "/dev/sdb")
+	os.Setenv("ZPOOL_0_SIZE_0", ">=900GB")
+
+	os.Setenv("ZPOOL_1_NAME", "tank1")
+	os.Setenv("ZPOOL_1_DISK_0_MODEL", "Samsung*")
+	os.Setenv("ZPOOL_1_DISK_1_MODEL", "Dell*")
 	os.Setenv("ZPOOL_ASHIFT", "12") // Global ashift
 
 	// Clean up env vars after test
 	defer func() {
-		os.Unsetenv("ZPOOL_NAME_0")
-		os.Unsetenv("ZPOOL_DISKS_0")
-		os.Unsetenv("ZPOOL_TYPE_0")
-		os.Unsetenv("ZPOOL_ASHIFT_0")
-		os.Unsetenv("ZPOOL_NAME_1")
-		os.Unsetenv("ZPOOL_DISKS_1")
+		os.Unsetenv("ZPOOL_0_NAME")
+		os.Unsetenv("ZPOOL_0_TYPE")
+		os.Unsetenv("ZPOOL_0_ASHIFT")
+		os.Unsetenv("ZPOOL_0_DISK_0_DEV")
+		os.Unsetenv("ZPOOL_0_DISK_1_DEV")
+		os.Unsetenv("ZPOOL_0_SIZE_0")
+
+		os.Unsetenv("ZPOOL_1_NAME")
+		os.Unsetenv("ZPOOL_1_DISK_0_MODEL")
+		os.Unsetenv("ZPOOL_1_DISK_1_MODEL")
 		os.Unsetenv("ZPOOL_ASHIFT")
 	}()
 
@@ -199,19 +233,22 @@ func TestParsePoolConfigs(t *testing.T) {
 		t.Fatalf("parsePoolConfigs() returned %d configs, want 2", len(configs))
 	}
 
-	// Check config 0
+	// Check config 0 (by dev)
 	if configs[0].Name != "tank0" || configs[0].Type != "mirror" || configs[0].Ashift != "13" {
 		t.Errorf("config 0 is incorrect: got %+v", configs[0])
 	}
-	if len(configs[0].Disks) != 2 || configs[0].Disks[0] != "/dev/sda" {
+	if len(configs[0].Disks) != 2 || configs[0].Disks[0].Dev != "/dev/sda" || configs[0].Disks[1].Dev != "/dev/sdb" {
 		t.Errorf("config 0 disks are incorrect: got %v", configs[0].Disks)
 	}
+	if len(configs[0].SizeFilters) != 1 || configs[0].SizeFilters[0] != ">=900GB" {
+		t.Errorf("config 0 size filters are incorrect: got %v", configs[0].SizeFilters)
+	}
 
-	// Check config 1 (uses global ashift, empty type)
+	// Check config 1 (by model, uses global ashift, empty type)
 	if configs[1].Name != "tank1" || configs[1].Type != "" || configs[1].Ashift != "12" {
 		t.Errorf("config 1 is incorrect: got %+v", configs[1])
 	}
-	if len(configs[1].Disks) != 1 || configs[1].Disks[0] != "/dev/sdc" {
+	if len(configs[1].Disks) != 2 || configs[1].Disks[0].Model != "Samsung*" || configs[1].Disks[1].Model != "Dell*" {
 		t.Errorf("config 1 disks are incorrect: got %v", configs[1].Disks)
 	}
 }
@@ -219,11 +256,11 @@ func TestParsePoolConfigs(t *testing.T) {
 func TestParsePoolConfigs_Limit(t *testing.T) {
 	// Set more environment variables than the MaxPools limit
 	for i := 0; i <= maxPools; i++ {
-		os.Setenv(fmt.Sprintf("ZPOOL_NAME_%d", i), fmt.Sprintf("pool%d", i))
+		os.Setenv(fmt.Sprintf("ZPOOL_%d_NAME", i), fmt.Sprintf("pool%d", i))
 	}
 	defer func() {
 		for i := 0; i <= maxPools; i++ {
-			os.Unsetenv(fmt.Sprintf("ZPOOL_NAME_%d", i))
+			os.Unsetenv(fmt.Sprintf("ZPOOL_%d_NAME", i))
 		}
 	}()
 
@@ -246,13 +283,18 @@ func TestCreatePool_Success(t *testing.T) {
 	config := poolConfig{
 		Name:   "goodpool",
 		Type:   "mirror",
-		Disks:  []string{"/dev/sda", "/dev/sdb"},
+		Disks:  []diskSpec{{Dev: "/dev/sda"}, {Dev: "/dev/sdb"}},
 		Ashift: "12",
 	}
 
-	err := createPool(mockProvider, "/fake/zpool", config)
+	usedDisks := make(map[string]bool)
+	err := createPool(mockProvider, "/fake/zpool", config, usedDisks)
 	if err != nil {
 		t.Fatalf("createPool() returned an unexpected error: %v", err)
+	}
+
+	if !usedDisks["/dev/sda"] || !usedDisks["/dev/sdb"] {
+		t.Errorf("Expected disks to be marked as used, but got %v", usedDisks)
 	}
 }
 
@@ -268,14 +310,15 @@ func TestCreatePool_PartialFailure(t *testing.T) {
 	}
 
 	configs := []poolConfig{
-		{Name: "goodpool", Disks: []string{"/dev/sda"}, Ashift: "12"},
-		{Name: "badpool", Disks: []string{"/dev/sdb"}, Ashift: "12"},
-		{Name: "anothergoodpool", Disks: []string{"/dev/sdc"}, Ashift: "12"},
+		{Name: "goodpool", Disks: []diskSpec{{Dev: "/dev/sda"}}, Ashift: "12"},
+		{Name: "badpool", Disks: []diskSpec{{Dev: "/dev/sdb"}}, Ashift: "12"},
+		{Name: "anothergoodpool", Disks: []diskSpec{{Dev: "/dev/sdc"}}, Ashift: "12"},
 	}
 
+	usedDisks := make(map[string]bool)
 	var allErrors []error
 	for _, config := range configs {
-		err := createPool(mockProvider, "/fake/zpool", config)
+		err := createPool(mockProvider, "/fake/zpool", config, usedDisks)
 		if err != nil {
 			allErrors = append(allErrors, fmt.Errorf("pool %q: %w", config.Name, err))
 		}
@@ -300,31 +343,408 @@ func TestCreatePool_DiskNotBlockDevice(t *testing.T) {
 	}
 	config := poolConfig{
 		Name:   "testpool",
-		Disks:  []string{"/dev/sda", "/dev/sdb"},
+		Disks:  []diskSpec{{Dev: "/dev/sda"}, {Dev: "/dev/sdb"}},
 		Ashift: "12",
 	}
 
 	// We need to capture the arguments passed to CreatePool to see what disks were used
-	var usedDisks []string
+	var createPoolDisks []string
 	mockProvider.CreatePoolFunc = func(zpoolPath string, args []string) ([]byte, error) {
 		// A bit of a hacky way to find the disk arguments
 		for _, arg := range args {
 			if strings.HasPrefix(arg, "/dev/") {
-				usedDisks = append(usedDisks, arg)
+				createPoolDisks = append(createPoolDisks, arg)
 			}
 		}
 		return nil, nil
 	}
 
-	err := createPool(mockProvider, "/fake/zpool", config)
+	usedDisks := make(map[string]bool)
+	err := createPool(mockProvider, "/fake/zpool", config, usedDisks)
 	if err != nil {
 		t.Fatalf("createPool() returned an unexpected error: %v", err)
 	}
 
-	if len(usedDisks) != 1 {
-		t.Fatalf("Expected CreatePool to be called with 1 disk, but got %d", len(usedDisks))
+	if len(createPoolDisks) != 1 {
+		t.Fatalf("Expected CreatePool to be called with 1 disk, but got %d", len(createPoolDisks))
 	}
-	if usedDisks[0] != "/dev/sda" {
-		t.Errorf("Expected disk '/dev/sda' to be used, but got %v", usedDisks)
+	if createPoolDisks[0] != "/dev/sda" {
+		t.Errorf("Expected disk '/dev/sda' to be used, but got %v", createPoolDisks)
+	}
+}
+
+func TestLiveZFSProvider_ResolveDiskByModel(t *testing.T) {
+	// Create a temporary directory to mock /sys/block
+	tmpDir := t.TempDir()
+
+	// Backup and restore sysBlockPath
+	oldSysBlockPath := sysBlockPath
+	sysBlockPath = tmpDir
+	t.Cleanup(func() {
+		sysBlockPath = oldSysBlockPath
+	})
+
+	provider := &liveZFSProvider{}
+
+	// Scenario 1: Setup a matching, unpartitioned disk "nvme1n1"
+	nvme1Dir := filepath.Join(tmpDir, "nvme1n1")
+	if err := os.MkdirAll(filepath.Join(nvme1Dir, "device"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nvme1Dir, "device", "model"), []byte("Dell DC NVMe CD8 U.2 960GB"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Size file: 960 GB is 1875000000 512-byte blocks
+	if err := os.WriteFile(filepath.Join(nvme1Dir, "size"), []byte("1875000000"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Scenario 2: Setup a matching, partitioned disk "nvme0n1"
+	nvme0Dir := filepath.Join(tmpDir, "nvme0n1")
+	if err := os.MkdirAll(filepath.Join(nvme0Dir, "device"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nvme0Dir, "device", "model"), []byte("Dell DC NVMe CD8 U.2 960GB"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nvme0Dir, "size"), []byte("1875000000"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Add partition subdirectory and partition file
+	partDir := filepath.Join(nvme0Dir, "nvme0n1p1")
+	if err := os.MkdirAll(partDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(partDir, "partition"), []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Scenario 3: Setup a disk with non-matching model "sda"
+	sdaDir := filepath.Join(tmpDir, "sda")
+	if err := os.MkdirAll(filepath.Join(sdaDir, "device"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sdaDir, "device", "model"), []byte("SAMSUNG_MZ7WD480HAGP"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 480 GB is 937500000 blocks
+	if err := os.WriteFile(filepath.Join(sdaDir, "size"), []byte("937500000"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Scenario 4: Setup a matching, read-only disk "nvme2n1"
+	nvme2Dir := filepath.Join(tmpDir, "nvme2n1")
+	if err := os.MkdirAll(filepath.Join(nvme2Dir, "device"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nvme2Dir, "device", "model"), []byte("Dell DC NVMe CD8 U.2 960GB"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nvme2Dir, "size"), []byte("1875000000"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nvme2Dir, "ro"), []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("Match model and skip partitioned/non-matching", func(t *testing.T) {
+		usedDisks := make(map[string]bool)
+		// Should match nvme1n1, skip sda (non-matching) and nvme0n1 (partitioned)
+		resolved, err := provider.ResolveDiskByModel("Dell DC NVMe", nil, usedDisks)
+		if err != nil {
+			t.Fatalf("Expected to resolve disk, got error: %v", err)
+		}
+		expected := "/dev/nvme1n1"
+		if resolved != expected {
+			t.Errorf("Expected %q, got %q", expected, resolved)
+		}
+	})
+
+	t.Run("Skip used disks", func(t *testing.T) {
+		usedDisks := map[string]bool{
+			"/dev/nvme1n1": true,
+		}
+		// Since nvme1n1 is marked used and nvme0n1 is partitioned, no matching disk should be found
+		_, err := provider.ResolveDiskByModel("Dell DC NVMe", nil, usedDisks)
+		if err == nil {
+			t.Fatal("Expected ResolveDiskByModel to fail because no unpartitioned unused disk matches")
+		}
+	})
+
+	t.Run("Case-insensitive normalization and underscores", func(t *testing.T) {
+		usedDisks := make(map[string]bool)
+		// Should match "Dell DC NVMe CD8 U.2 960GB"
+		resolved, err := provider.ResolveDiskByModel("dell dc nvme", nil, usedDisks)
+		if err != nil {
+			t.Fatalf("Expected to resolve disk, got error: %v", err)
+		}
+		if resolved != "/dev/nvme1n1" {
+			t.Errorf("Expected /dev/nvme1n1, got %q", resolved)
+		}
+	})
+
+	t.Run("Wildcard match - suffix asterisk", func(t *testing.T) {
+		usedDisks := make(map[string]bool)
+		resolved, err := provider.ResolveDiskByModel("dell*", nil, usedDisks)
+		if err != nil {
+			t.Fatalf("Expected to resolve disk via wildcard, got error: %v", err)
+		}
+		if resolved != "/dev/nvme1n1" {
+			t.Errorf("Expected /dev/nvme1n1, got %q", resolved)
+		}
+	})
+
+	t.Run("Wildcard match - middle asterisk", func(t *testing.T) {
+		usedDisks := make(map[string]bool)
+		resolved, err := provider.ResolveDiskByModel("*cd8*", nil, usedDisks)
+		if err != nil {
+			t.Fatalf("Expected to resolve disk via wildcard, got error: %v", err)
+		}
+		if resolved != "/dev/nvme1n1" {
+			t.Errorf("Expected /dev/nvme1n1, got %q", resolved)
+		}
+	})
+
+	t.Run("Wildcard match - single character wildcard", func(t *testing.T) {
+		usedDisks := make(map[string]bool)
+		// Should match sda ("samsung_mz7wd480hagp" after normalization)
+		resolved, err := provider.ResolveDiskByModel("samsung_mz7wd480hag?", nil, usedDisks)
+		if err != nil {
+			t.Fatalf("Expected to resolve sda, got error: %v", err)
+		}
+		if resolved != "/dev/sda" {
+			t.Errorf("Expected /dev/sda, got %q", resolved)
+		}
+	})
+
+	t.Run("Size filtering - match size", func(t *testing.T) {
+		usedDisks := make(map[string]bool)
+		conds := []sizeCondition{{operator: ">=", target: 850 * 1024 * 1024 * 1024}}
+		resolved, err := provider.ResolveDiskByModel("Dell*", conds, usedDisks)
+		if err != nil {
+			t.Fatalf("Expected to resolve disk with matching size, got error: %v", err)
+		}
+		if resolved != "/dev/nvme1n1" {
+			t.Errorf("Expected /dev/nvme1n1, got %q", resolved)
+		}
+	})
+
+	t.Run("Size filtering - skip due to size", func(t *testing.T) {
+		usedDisks := make(map[string]bool)
+		conds := []sizeCondition{{operator: ">", target: 1000 * 1024 * 1024 * 1024}} // 1 TB, larger than 960 GB
+		_, err := provider.ResolveDiskByModel("Dell*", conds, usedDisks)
+		if err == nil {
+			t.Fatal("Expected ResolveDiskByModel to fail because matched disk is too small")
+		}
+	})
+
+	t.Run("Skip read-only devices", func(t *testing.T) {
+		usedDisks := map[string]bool{
+			"/dev/nvme1n1": true, // We already used nvme1n1, so the matcher is forced to consider nvme2n1 (which is ro)
+		}
+		_, err := provider.ResolveDiskByModel("Dell*", nil, usedDisks)
+		if err == nil {
+			t.Fatal("Expected ResolveDiskByModel to fail because the remaining matching disk is read-only")
+		}
+	})
+}
+
+func TestParseSizeInBytes(t *testing.T) {
+	testCases := []struct {
+		input string
+		want  uint64
+		fail  bool
+	}{
+		{"100", 100, false},
+		{"100B", 100, false},
+		{"1KB", 1024, false},
+		{"1.5KB", 1536, false},
+		{"10MB", 10 * 1024 * 1024, false},
+		{"960GB", 960 * 1024 * 1024 * 1024, false},
+		{"1.2TB", 1319413953331, false}, // 1.2 * 1024^4 = 1319413953331.2 -> 1319413953331
+		{"", 0, true},
+		{"GB", 0, true},
+		{"10XB", 0, true},
+	}
+
+	for _, tc := range testCases {
+		got, err := parseSizeInBytes(tc.input)
+		if tc.fail {
+			if err == nil {
+				t.Errorf("parseSizeInBytes(%q) expected error, got nil", tc.input)
+			}
+		} else {
+			if err != nil {
+				t.Errorf("parseSizeInBytes(%q) returned unexpected error: %v", tc.input, err)
+			}
+			if got != tc.want {
+				t.Errorf("parseSizeInBytes(%q) = %d; want %d", tc.input, got, tc.want)
+			}
+		}
+	}
+}
+
+func TestParseSizeCondition(t *testing.T) {
+	testCases := []struct {
+		input  string
+		op     string
+		target uint64
+		fail   bool
+	}{
+		{"<=10GB", "<=", 10 * 1024 * 1024 * 1024, false},
+		{">=100B", ">=", 100, false},
+		{"=1TB", "=", 1024 * 1024 * 1024 * 1024, false},
+		{"==500MB", "==", 500 * 1024 * 1024, false},
+		{"<5.5GB", "<", 5905580032, false}, // 5.5 * 1024^3
+		{">10", ">", 10, false},
+		{"10GB", "", 0, true},
+		{"<>10GB", "", 0, true},
+	}
+
+	for _, tc := range testCases {
+		got, err := parseSizeCondition(tc.input)
+		if tc.fail {
+			if err == nil {
+				t.Errorf("parseSizeCondition(%q) expected error, got nil", tc.input)
+			}
+		} else {
+			if err != nil {
+				t.Errorf("parseSizeCondition(%q) returned unexpected error: %v", tc.input, err)
+			}
+			if got.operator != tc.op {
+				t.Errorf("parseSizeCondition(%q) operator = %q; want %q", tc.input, got.operator, tc.op)
+			}
+			if got.target != tc.target {
+				t.Errorf("parseSizeCondition(%q) target = %d; want %d", tc.input, got.target, tc.target)
+			}
+		}
+	}
+}
+
+func TestCreatePool_ResolveByModel_Success(t *testing.T) {
+	mockProvider := &mockZFSProvider{
+		ResolveDiskByModelFunc: func(model string, sizeConds []sizeCondition, usedDisks map[string]bool) (string, error) {
+			if model == "Dell DC NVMe" {
+				if usedDisks["/dev/nvme1n1"] {
+					return "/dev/nvme2n1", nil
+				}
+				return "/dev/nvme1n1", nil
+			}
+			return "", fmt.Errorf("unknown model %q", model)
+		},
+	}
+
+	config := poolConfig{
+		Name:   "modelpool",
+		Disks:  []diskSpec{{Model: "Dell DC NVMe"}, {Model: "Dell DC NVMe"}},
+		Ashift: "12",
+	}
+
+	usedDisks := make(map[string]bool)
+	var createPoolDisks []string
+	mockProvider.CreatePoolFunc = func(zpoolPath string, args []string) ([]byte, error) {
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "/dev/") {
+				createPoolDisks = append(createPoolDisks, arg)
+			}
+		}
+		return nil, nil
+	}
+
+	err := createPool(mockProvider, "/fake/zpool", config, usedDisks)
+	if err != nil {
+		t.Fatalf("createPool() returned an unexpected error: %v", err)
+	}
+
+	if len(createPoolDisks) != 2 {
+		t.Fatalf("Expected 2 disks to be used, got %d", len(createPoolDisks))
+	}
+	if createPoolDisks[0] != "/dev/nvme1n1" || createPoolDisks[1] != "/dev/nvme2n1" {
+		t.Errorf("Expected disks [/dev/nvme1n1, /dev/nvme2n1], got %v", createPoolDisks)
+	}
+
+	if !usedDisks["/dev/nvme1n1"] || !usedDisks["/dev/nvme2n1"] {
+		t.Errorf("Expected usedDisks to be populated, got %v", usedDisks)
+	}
+}
+
+func TestCreatePool_HybridOrder(t *testing.T) {
+	mockProvider := &mockZFSProvider{
+		ResolveDiskByModelFunc: func(model string, sizeConds []sizeCondition, usedDisks map[string]bool) (string, error) {
+			if model == "Dell*" {
+				return "/dev/nvme1n1", nil
+			}
+			return "", fmt.Errorf("unknown model pattern %q", model)
+		},
+	}
+
+	config := poolConfig{
+		Name:   "hybridpool",
+		Disks:  []diskSpec{{Dev: "/dev/sda"}, {Model: "Dell*"}},
+		Ashift: "12",
+	}
+
+	usedDisks := make(map[string]bool)
+	var createPoolDisks []string
+	mockProvider.CreatePoolFunc = func(zpoolPath string, args []string) ([]byte, error) {
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "/dev/") {
+				createPoolDisks = append(createPoolDisks, arg)
+			}
+		}
+		return nil, nil
+	}
+
+	err := createPool(mockProvider, "/fake/zpool", config, usedDisks)
+	if err != nil {
+		t.Fatalf("createPool failed: %v", err)
+	}
+
+	// We should see both /dev/sda and the resolved model /dev/nvme1n1 in the exact order declared
+	if len(createPoolDisks) != 2 || createPoolDisks[0] != "/dev/sda" || createPoolDisks[1] != "/dev/nvme1n1" {
+		t.Errorf("Expected disks [/dev/sda, /dev/nvme1n1], got %v", createPoolDisks)
+	}
+}
+
+func TestCreatePool_SymlinkDuplicateTracking(t *testing.T) {
+	mockProvider := &mockZFSProvider{
+		EvalSymlinksFunc: func(path string) (string, error) {
+			// Resolve both /dev/disk/by-id/symlink1 and /dev/disk/by-id/symlink2 to /dev/sda
+			if strings.HasPrefix(path, "/dev/disk/by-id/symlink") {
+				return "/dev/sda", nil
+			}
+			return path, nil
+		},
+	}
+
+	config := poolConfig{
+		Name:   "symlinkpool",
+		Disks:  []diskSpec{{Dev: "/dev/disk/by-id/symlink1"}, {Dev: "/dev/disk/by-id/symlink2"}},
+		Ashift: "12",
+	}
+
+	usedDisks := make(map[string]bool)
+	var createPoolDisks []string
+	mockProvider.CreatePoolFunc = func(zpoolPath string, args []string) ([]byte, error) {
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "/dev/") {
+				createPoolDisks = append(createPoolDisks, arg)
+			}
+		}
+		return nil, nil
+	}
+
+	err := createPool(mockProvider, "/fake/zpool", config, usedDisks)
+	if err != nil {
+		t.Fatalf("createPool failed: %v", err)
+	}
+
+	// Since both resolved to /dev/sda, the second one is a duplicate and must be skipped.
+	// Only 1 disk should be used.
+	if len(createPoolDisks) != 1 {
+		t.Fatalf("Expected exactly 1 disk to be used due to duplicate symlink resolution, but got %d", len(createPoolDisks))
+	}
+	if createPoolDisks[0] != "/dev/sda" {
+		t.Errorf("Expected disk '/dev/sda' to be used, but got %q", createPoolDisks[0])
 	}
 }

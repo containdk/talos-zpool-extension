@@ -16,12 +16,19 @@ const (
 	maxPools        = 42 // Sanity limit for the number of pools to create.
 )
 
+// diskSpec defines a target disk declaration which can be defined by explicit path (dev) or dynamic query (model).
+type diskSpec struct {
+	Dev   string // Explicit block device path (e.g. "/dev/sda")
+	Model string // Dynamic disk model query (e.g. "Dell DC NVMe CD8*")
+}
+
 // poolConfig holds the configuration for a single ZFS pool.
 type poolConfig struct {
-	Name   string   // Name of the ZFS pool (e.g., "tank").
-	Type   string   // Type of the vdev (e.g., "mirror", "raidz", "draid"). Can be empty for single-disk vdevs.
-	Disks  []string // List of disk paths or device nodes to be used in the pool (e.g., "/dev/sda", "/dev/sdb").
-	Ashift string   // ashift property for the pool, specifying the sector size alignment (e.g., "12" for 4K).
+	Name        string     // Name of the ZFS pool (e.g., "tank").
+	Type        string     // Type of the vdev (e.g., "mirror", "raidz", "draid"). Can be empty for single-disk vdevs.
+	Disks       []diskSpec // List of ordered disk specifications.
+	SizeFilters []string   // List of pool-wide size filter conditions.
+	Ashift      string     // ashift property for the pool, specifying the sector size alignment (e.g., "12" for 4K).
 }
 
 func main() {
@@ -45,10 +52,11 @@ func main() {
 		os.Exit(0)
 	}
 
+	usedDisks := make(map[string]bool)
 	var allErrors []error
 	for _, config := range configs {
 		slog.Info("Processing pool configuration", "pool", config.Name)
-		err := createPool(provider, zpoolPath, config)
+		err := createPool(provider, zpoolPath, config, usedDisks)
 		if err != nil {
 			slog.Error("Failed to create pool", "pool", config.Name, "error", err)
 			allErrors = append(allErrors, fmt.Errorf("pool %q: %w", config.Name, err))
@@ -66,14 +74,14 @@ func main() {
 	slog.Info("Talos ZFS Pool Extension: All pools processed successfully. Finished.")
 }
 
-// parsePoolConfigs reads indexed environment variables (ZPOOL_NAME_0, etc.)
-// and returns a slice of PoolConfig structs.
+// parsePoolConfigs reads nested indexed environment variables (ZPOOL_<n>_NAME, ZPOOL_<n>_DISK_<m>_DEV, etc.)
+// and returns a slice of poolConfig structs.
 func parsePoolConfigs() []poolConfig {
 	var configs []poolConfig
 	globalAshift := getEnv("ZPOOL_ASHIFT", defaultAshift)
 
 	for i := range maxPools {
-		poolNameKey := fmt.Sprintf("ZPOOL_NAME_%d", i)
+		poolNameKey := fmt.Sprintf("ZPOOL_%d_NAME", i)
 		poolName := os.Getenv(poolNameKey)
 
 		if poolName == "" {
@@ -81,26 +89,51 @@ func parsePoolConfigs() []poolConfig {
 			break
 		}
 
-		poolDisksKey := fmt.Sprintf("ZPOOL_DISKS_%d", i)
-		poolDisksStr := os.Getenv(poolDisksKey)
-
-		poolTypeKey := fmt.Sprintf("ZPOOL_TYPE_%d", i)
+		poolTypeKey := fmt.Sprintf("ZPOOL_%d_TYPE", i)
 		poolType := os.Getenv(poolTypeKey)
 
-		poolAshiftKey := fmt.Sprintf("ZPOOL_ASHIFT_%d", i)
+		poolAshiftKey := fmt.Sprintf("ZPOOL_%d_ASHIFT", i)
 		ashift := getEnv(poolAshiftKey, globalAshift)
 
 		config := poolConfig{
 			Name:   poolName,
 			Type:   poolType,
-			Disks:  strings.Fields(poolDisksStr),
 			Ashift: ashift,
 		}
+
+		// Parse nested disks
+		for j := 0; ; j++ {
+			devKey := fmt.Sprintf("ZPOOL_%d_DISK_%d_DEV", i, j)
+			modelKey := fmt.Sprintf("ZPOOL_%d_DISK_%d_MODEL", i, j)
+
+			devVal := os.Getenv(devKey)
+			modelVal := os.Getenv(modelKey)
+
+			if devVal == "" && modelVal == "" {
+				break
+			}
+
+			config.Disks = append(config.Disks, diskSpec{
+				Dev:   strings.TrimSpace(devVal),
+				Model: strings.TrimSpace(modelVal),
+			})
+		}
+
+		// Parse nested size filters
+		for j := 0; ; j++ {
+			sizeKey := fmt.Sprintf("ZPOOL_%d_SIZE_%d", i, j)
+			sizeVal := os.Getenv(sizeKey)
+			if sizeVal == "" {
+				break
+			}
+			config.SizeFilters = append(config.SizeFilters, strings.TrimSpace(sizeVal))
+		}
+
 		configs = append(configs, config)
 	}
 
 	// After the loop, check if the reason for stopping was hitting the limit.
-	if os.Getenv(fmt.Sprintf("ZPOOL_NAME_%d", maxPools)) != "" {
+	if os.Getenv(fmt.Sprintf("ZPOOL_%d_NAME", maxPools)) != "" {
 		slog.Warn("Reached the maximum number of pools allowed, ignoring further configurations.", "limit", maxPools)
 	}
 
@@ -108,7 +141,7 @@ func parsePoolConfigs() []poolConfig {
 }
 
 // createPool handles the logic for creating a single ZFS pool.
-func createPool(provider zfsProvider, zpoolPath string, config poolConfig) error {
+func createPool(provider zfsProvider, zpoolPath string, config poolConfig, usedDisks map[string]bool) error {
 	// Validate inputs
 	if !isValidZpoolName(config.Name) {
 		return fmt.Errorf("invalid name: %q", config.Name)
@@ -130,20 +163,56 @@ func createPool(provider zfsProvider, zpoolPath string, config poolConfig) error
 		return nil
 	}
 
-	// Probe for specified disks
-	slog.Info("Probing for specified disks", "pool", config.Name, "disks", config.Disks)
+	// Parse size conditions if specified
+	var sizeConds []sizeCondition
+	for _, condStr := range config.SizeFilters {
+		cond, err := parseSizeCondition(condStr)
+		if err != nil {
+			return fmt.Errorf("invalid size filter condition %q: %w", condStr, err)
+		}
+		sizeConds = append(sizeConds, cond)
+	}
+
+	// Probe for specified disks in the exact ordered declaration
+	slog.Info("Probing specified disks", "pool", config.Name, "disks", config.Disks)
 	var disksToUse []string
 	for _, disk := range config.Disks {
-		isBlock, err := provider.IsBlockDevice(disk)
-		if err != nil {
-			slog.Warn("Error checking device. Skipping.", "pool", config.Name, "device", disk, "error", err)
-			continue
-		}
-		if isBlock {
-			slog.Info("Found block device", "pool", config.Name, "device", disk)
-			disksToUse = append(disksToUse, disk)
-		} else {
-			slog.Warn("Device is not a block device or does not exist. Skipping.", "pool", config.Name, "device", disk)
+		if disk.Dev != "" {
+			canonicalDev, err := provider.EvalSymlinks(disk.Dev)
+			if err != nil {
+				slog.Warn("Error resolving symlink for device. Skipping.", "pool", config.Name, "device", disk.Dev, "error", err)
+				continue
+			}
+
+			isBlock, err := provider.IsBlockDevice(canonicalDev)
+			if err != nil {
+				slog.Warn("Error checking device. Skipping.", "pool", config.Name, "device", canonicalDev, "error", err)
+				continue
+			}
+			if isBlock {
+				if usedDisks[canonicalDev] {
+					slog.Warn("Device is already used by another configuration or disk. Skipping.", "pool", config.Name, "device", canonicalDev)
+					continue
+				}
+				if !diskMatchesSize(provider, canonicalDev, sizeConds) {
+					slog.Warn("Device size does not match size conditions. Skipping.", "pool", config.Name, "device", canonicalDev)
+					continue
+				}
+				slog.Info("Found block device", "pool", config.Name, "device", canonicalDev)
+				disksToUse = append(disksToUse, canonicalDev)
+				usedDisks[canonicalDev] = true
+			} else {
+				slog.Warn("Device is not a block device or does not exist. Skipping.", "pool", config.Name, "device", canonicalDev)
+			}
+		} else if disk.Model != "" {
+			resolved, err := provider.ResolveDiskByModel(disk.Model, sizeConds, usedDisks)
+			if err != nil {
+				slog.Warn("Error resolving disk by model. Skipping.", "pool", config.Name, "model", disk.Model, "error", err)
+				continue
+			}
+			slog.Info("Resolved model to block device", "pool", config.Name, "model", disk.Model, "device", resolved)
+			disksToUse = append(disksToUse, resolved)
+			usedDisks[resolved] = true
 		}
 	}
 
@@ -248,4 +317,23 @@ func isValidZpoolType(poolType string) bool {
 func isValidAshift(ashift string) bool {
 	_, err := strconv.Atoi(ashift)
 	return err == nil
+}
+
+// diskMatchesSize checks if the block device meets all specified size conditions.
+func diskMatchesSize(provider zfsProvider, path string, conds []sizeCondition) bool {
+	if len(conds) == 0 {
+		return true
+	}
+	size, err := provider.GetDiskSize(path)
+	if err != nil {
+		slog.Warn("Failed to get disk size for filtering", "device", path, "error", err)
+		return false
+	}
+	for _, cond := range conds {
+		if !cond.Matches(size) {
+			slog.Info("Disk size does not match condition", "device", path, "size_bytes", size, "operator", cond.operator, "target_bytes", cond.target)
+			return false
+		}
+	}
+	return true
 }
