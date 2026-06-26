@@ -191,18 +191,15 @@ func (p *liveZFSProvider) IsBlockDevice(path string) (bool, error) {
 
 // GetDiskSize returns the size of the block device at the given path in bytes.
 func (p *liveZFSProvider) GetDiskSize(path string) (uint64, error) {
-	root, err := os.OpenRoot(sysBlockPath)
-	if err != nil {
-		return 0, fmt.Errorf("failed to open root %s: %w", sysBlockPath, err)
-	}
-	defer root.Close()
-
-	realPath, err := filepath.EvalSymlinks(path)
+	realPath, err := p.EvalSymlinks(path)
 	if err != nil {
 		return 0, fmt.Errorf("failed to resolve symlink for %s: %w", path, err)
 	}
 	devName := filepath.Base(realPath)
-	sizeBytes, err := root.ReadFile(filepath.Join(devName, "size"))
+	sizeFile := filepath.Join(sysBlockPath, devName, "size")
+
+	// #nosec G304: Intentionally reading disk size from sysfs
+	sizeBytes, err := os.ReadFile(sizeFile)
 	if err != nil {
 		return 0, fmt.Errorf("failed to read disk size file for %s: %w", devName, err)
 	}
@@ -219,21 +216,10 @@ var sysBlockPath = "/sys/block"
 // ResolveDiskByModel scans /sys/block to find a disk matching the model
 // that is unpartitioned, matches size restrictions, and not already marked as used.
 func (p *liveZFSProvider) ResolveDiskByModel(targetModel string, sizeConds []sizeCondition, usedDisks map[string]bool) (string, error) {
-	root, err := os.OpenRoot(sysBlockPath)
+	// #nosec G304: Intentionally reading sysBlockPath directory
+	entries, err := os.ReadDir(sysBlockPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to open root %s: %w", sysBlockPath, err)
-	}
-	defer root.Close()
-
-	dirFile, err := root.Open(".")
-	if err != nil {
-		return "", fmt.Errorf("failed to open root %s: %w", sysBlockPath, err)
-	}
-	defer dirFile.Close()
-
-	entries, err := dirFile.ReadDir(-1)
-	if err != nil {
-		return "", fmt.Errorf("failed to read directory contents: %w", err)
+		return "", fmt.Errorf("failed to read %s: %w", sysBlockPath, err)
 	}
 
 	normalizedTarget := normalizeModel(targetModel)
@@ -251,8 +237,10 @@ func (p *liveZFSProvider) ResolveDiskByModel(targetModel string, sizeConds []siz
 			continue
 		}
 
-		// Skip read-only devices (G304 avoided)
-		roBytes, err := root.ReadFile(filepath.Join(devName, "ro"))
+		// Skip read-only devices
+		roFile := filepath.Join(sysBlockPath, devName, "ro")
+		// #nosec G304: Intentionally reading disk read-only status from sysfs
+		roBytes, err := os.ReadFile(roFile)
 		if err == nil {
 			if strings.TrimSpace(string(roBytes)) == "1" {
 				continue
@@ -260,7 +248,9 @@ func (p *liveZFSProvider) ResolveDiskByModel(targetModel string, sizeConds []siz
 		}
 
 		// Read disk model securely using root (G304 avoided)
-		modelBytes, err := root.ReadFile(filepath.Join(devName, "device", "model"))
+		modelFile := filepath.Join(sysBlockPath, devName, "device", "model")
+		// #nosec G304: Intentionally reading disk model from sysfs
+		modelBytes, err := os.ReadFile(modelFile)
 		if err != nil {
 			// Skip if there's no model file (e.g. virtual disks, loop devices)
 			continue
@@ -286,7 +276,9 @@ func (p *liveZFSProvider) ResolveDiskByModel(targetModel string, sizeConds []siz
 
 		// Check size conditions if any are specified securely using root (G304 avoided)
 		if len(sizeConds) > 0 {
-			sizeBytes, err := root.ReadFile(filepath.Join(devName, "size"))
+			sizeFile := filepath.Join(sysBlockPath, devName, "size")
+			// #nosec G304: Intentionally reading disk size from sysfs
+			sizeBytes, err := os.ReadFile(sizeFile)
 			if err != nil {
 				continue
 			}
@@ -311,12 +303,9 @@ func (p *liveZFSProvider) ResolveDiskByModel(targetModel string, sizeConds []siz
 
 		// Check if the disk is partitioned.
 		// A partition in /sys/block/<devName>/ is a subdirectory containing a file named "partition" securely using root (G304 avoided)
-		devFile, err := root.Open(devName)
-		if err != nil {
-			continue
-		}
-		subEntries, err := devFile.ReadDir(-1)
-		_ = devFile.Close()
+		devDir := filepath.Join(sysBlockPath, devName)
+		// #nosec G304: Intentionally reading block device directory from sysfs
+		subEntries, err := os.ReadDir(devDir)
 		if err != nil {
 			continue
 		}
@@ -324,8 +313,9 @@ func (p *liveZFSProvider) ResolveDiskByModel(targetModel string, sizeConds []siz
 		isPartitioned := false
 		for _, subEntry := range subEntries {
 			if subEntry.IsDir() {
-				partFile := filepath.Join(devName, subEntry.Name(), "partition")
-				if _, err := root.Stat(partFile); err == nil {
+				partFile := filepath.Join(devDir, subEntry.Name(), "partition")
+				// #nosec G304: Intentionally statting partition file under sysfs
+				if _, err := os.Stat(partFile); err == nil {
 					isPartitioned = true
 					break
 				}
