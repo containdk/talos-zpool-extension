@@ -17,6 +17,7 @@ type mockZFSProvider struct {
 	IsBlockDeviceFunc      func(path string) (bool, error)
 	ResolveDiskByModelFunc func(model string, sizeConds []sizeCondition, usedDisks map[string]bool) (string, error)
 	GetDiskSizeFunc        func(path string) (uint64, error)
+	EvalSymlinksFunc       func(path string) (string, error)
 }
 
 func (m *mockZFSProvider) LookPath(file string) (string, error) {
@@ -68,6 +69,13 @@ func (m *mockZFSProvider) GetDiskSize(path string) (uint64, error) {
 	}
 	// Default size is 1 TB (well within standard sizes)
 	return 1024 * 1024 * 1024 * 1024, nil
+}
+
+func (m *mockZFSProvider) EvalSymlinks(path string) (string, error) {
+	if m.EvalSymlinksFunc != nil {
+		return m.EvalSymlinksFunc(path)
+	}
+	return path, nil
 }
 
 // --- Unit Tests for Validation Functions ---
@@ -424,6 +432,21 @@ func TestLiveZFSProvider_ResolveDiskByModel(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Scenario 4: Setup a matching, read-only disk "nvme2n1"
+	nvme2Dir := filepath.Join(tmpDir, "nvme2n1")
+	if err := os.MkdirAll(filepath.Join(nvme2Dir, "device"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nvme2Dir, "device", "model"), []byte("Dell DC NVMe CD8 U.2 960GB"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nvme2Dir, "size"), []byte("1875000000"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nvme2Dir, "ro"), []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	t.Run("Match model and skip partitioned/non-matching", func(t *testing.T) {
 		usedDisks := make(map[string]bool)
 		// Should match nvme1n1, skip sda (non-matching) and nvme0n1 (partitioned)
@@ -512,6 +535,16 @@ func TestLiveZFSProvider_ResolveDiskByModel(t *testing.T) {
 		_, err := provider.ResolveDiskByModel("Dell*", conds, usedDisks)
 		if err == nil {
 			t.Fatal("Expected ResolveDiskByModel to fail because matched disk is too small")
+		}
+	})
+
+	t.Run("Skip read-only devices", func(t *testing.T) {
+		usedDisks := map[string]bool{
+			"/dev/nvme1n1": true, // We already used nvme1n1, so the matcher is forced to consider nvme2n1 (which is ro)
+		}
+		_, err := provider.ResolveDiskByModel("Dell*", nil, usedDisks)
+		if err == nil {
+			t.Fatal("Expected ResolveDiskByModel to fail because the remaining matching disk is read-only")
 		}
 	})
 }
@@ -670,5 +703,48 @@ func TestCreatePool_HybridOrder(t *testing.T) {
 	// We should see both /dev/sda and the resolved model /dev/nvme1n1 in the exact order declared
 	if len(createPoolDisks) != 2 || createPoolDisks[0] != "/dev/sda" || createPoolDisks[1] != "/dev/nvme1n1" {
 		t.Errorf("Expected disks [/dev/sda, /dev/nvme1n1], got %v", createPoolDisks)
+	}
+}
+
+func TestCreatePool_SymlinkDuplicateTracking(t *testing.T) {
+	mockProvider := &mockZFSProvider{
+		EvalSymlinksFunc: func(path string) (string, error) {
+			// Resolve both /dev/disk/by-id/symlink1 and /dev/disk/by-id/symlink2 to /dev/sda
+			if strings.HasPrefix(path, "/dev/disk/by-id/symlink") {
+				return "/dev/sda", nil
+			}
+			return path, nil
+		},
+	}
+
+	config := poolConfig{
+		Name:   "symlinkpool",
+		Disks:  []diskSpec{{Dev: "/dev/disk/by-id/symlink1"}, {Dev: "/dev/disk/by-id/symlink2"}},
+		Ashift: "12",
+	}
+
+	usedDisks := make(map[string]bool)
+	var createPoolDisks []string
+	mockProvider.CreatePoolFunc = func(zpoolPath string, args []string) ([]byte, error) {
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "/dev/") {
+				createPoolDisks = append(createPoolDisks, arg)
+			}
+		}
+		return nil, nil
+	}
+
+	err := createPool(mockProvider, "/fake/zpool", config, usedDisks)
+	if err != nil {
+		t.Fatalf("createPool failed: %v", err)
+	}
+
+	// Since both resolved to /dev/sda, the second one is a duplicate and must be skipped.
+	// Only 1 disk should be used.
+	if len(createPoolDisks) != 1 {
+		t.Fatalf("Expected exactly 1 disk to be used due to duplicate symlink resolution, but got %d", len(createPoolDisks))
+	}
+	if createPoolDisks[0] != "/dev/sda" {
+		t.Errorf("Expected disk '/dev/sda' to be used, but got %q", createPoolDisks[0])
 	}
 }

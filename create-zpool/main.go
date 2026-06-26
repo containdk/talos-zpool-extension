@@ -178,25 +178,31 @@ func createPool(provider zfsProvider, zpoolPath string, config poolConfig, usedD
 	var disksToUse []string
 	for _, disk := range config.Disks {
 		if disk.Dev != "" {
-			isBlock, err := provider.IsBlockDevice(disk.Dev)
+			canonicalDev, err := provider.EvalSymlinks(disk.Dev)
 			if err != nil {
-				slog.Warn("Error checking device. Skipping.", "pool", config.Name, "device", disk.Dev, "error", err)
+				slog.Warn("Error resolving symlink for device. Skipping.", "pool", config.Name, "device", disk.Dev, "error", err)
+				continue
+			}
+
+			isBlock, err := provider.IsBlockDevice(canonicalDev)
+			if err != nil {
+				slog.Warn("Error checking device. Skipping.", "pool", config.Name, "device", canonicalDev, "error", err)
 				continue
 			}
 			if isBlock {
-				if usedDisks[disk.Dev] {
-					slog.Warn("Device is already used by another configuration or disk. Skipping.", "pool", config.Name, "device", disk.Dev)
+				if usedDisks[canonicalDev] {
+					slog.Warn("Device is already used by another configuration or disk. Skipping.", "pool", config.Name, "device", canonicalDev)
 					continue
 				}
-				if !diskMatchesSize(provider, disk.Dev, sizeConds) {
-					slog.Warn("Device size does not match size conditions. Skipping.", "pool", config.Name, "device", disk.Dev)
+				if !diskMatchesSize(provider, canonicalDev, sizeConds) {
+					slog.Warn("Device size does not match size conditions. Skipping.", "pool", config.Name, "device", canonicalDev)
 					continue
 				}
-				slog.Info("Found block device", "pool", config.Name, "device", disk.Dev)
-				disksToUse = append(disksToUse, disk.Dev)
-				usedDisks[disk.Dev] = true
+				slog.Info("Found block device", "pool", config.Name, "device", canonicalDev)
+				disksToUse = append(disksToUse, canonicalDev)
+				usedDisks[canonicalDev] = true
 			} else {
-				slog.Warn("Device is not a block device or does not exist. Skipping.", "pool", config.Name, "device", disk.Dev)
+				slog.Warn("Device is not a block device or does not exist. Skipping.", "pool", config.Name, "device", canonicalDev)
 			}
 		} else if disk.Model != "" {
 			resolved, err := provider.ResolveDiskByModel(disk.Model, sizeConds, usedDisks)

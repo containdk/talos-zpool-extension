@@ -137,6 +137,8 @@ type zfsProvider interface {
 	ResolveDiskByModel(model string, sizeConds []sizeCondition, usedDisks map[string]bool) (string, error)
 	// GetDiskSize returns the size of the block device at the given path in bytes.
 	GetDiskSize(path string) (uint64, error)
+	// EvalSymlinks evaluates any symbolic links to return the canonical path.
+	EvalSymlinks(path string) (string, error)
 }
 
 // liveZFSProvider is the concrete implementation of ZFSProvider that executes
@@ -146,6 +148,11 @@ type liveZFSProvider struct{}
 // LookPath wraps exec.LookPath.
 func (p *liveZFSProvider) LookPath(file string) (string, error) {
 	return exec.LookPath(file)
+}
+
+// EvalSymlinks wraps filepath.EvalSymlinks.
+func (p *liveZFSProvider) EvalSymlinks(path string) (string, error) {
+	return filepath.EvalSymlinks(path)
 }
 
 // PoolExists checks if a ZFS pool with the given name already exists.
@@ -242,6 +249,14 @@ func (p *liveZFSProvider) ResolveDiskByModel(targetModel string, sizeConds []siz
 		devPath := filepath.Join("/dev", devName)
 		if usedDisks[devPath] {
 			continue
+		}
+
+		// Skip read-only devices (G304 avoided)
+		roBytes, err := root.ReadFile(filepath.Join(devName, "ro"))
+		if err == nil {
+			if strings.TrimSpace(string(roBytes)) == "1" {
+				continue
+			}
 		}
 
 		// Read disk model securely using root (G304 avoided)
