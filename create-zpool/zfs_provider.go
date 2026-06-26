@@ -196,7 +196,7 @@ func (p *liveZFSProvider) GetDiskSize(path string) (uint64, error) {
 		return 0, fmt.Errorf("failed to resolve symlink for %s: %w", path, err)
 	}
 	devName := filepath.Base(realPath)
-	sizeFile := filepath.Join(sysBlockPath, devName, "size")
+	sizeFile := filepath.Join("/sys/class/block", devName, "size")
 
 	// #nosec G304: Intentionally reading disk size from sysfs
 	sizeBytes, err := os.ReadFile(sizeFile)
