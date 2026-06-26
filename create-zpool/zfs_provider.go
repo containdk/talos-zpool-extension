@@ -336,5 +336,6 @@ func (p *liveZFSProvider) ResolveDiskByModel(targetModel string, sizeConds []siz
 // normalizeModel normalizes a model string to make matches more robust.
 // It converts to lower case and trims surrounding whitespace.
 func normalizeModel(m string) string {
+	m = strings.ReplaceAll(m, "\x00", "")
 	return strings.TrimSpace(strings.ToLower(m))
 }
