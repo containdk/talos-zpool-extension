@@ -190,7 +190,11 @@ func (p *liveZFSProvider) GetDiskSize(path string) (uint64, error) {
 	}
 	defer root.Close()
 
-	devName := filepath.Base(path)
+	realPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return 0, fmt.Errorf("failed to resolve symlink for %s: %w", path, err)
+	}
+	devName := filepath.Base(realPath)
 	sizeBytes, err := root.ReadFile(filepath.Join(devName, "size"))
 	if err != nil {
 		return 0, fmt.Errorf("failed to read disk size file for %s: %w", devName, err)
