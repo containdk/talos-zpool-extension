@@ -13,26 +13,22 @@ handy because Talos provides a minimal environment without a shell.
 The extension provides:
 
 1. **A Go Binary**: Located at `/usr/local/lib/containers/zpool-creator/create-zpool`.
-2. **A Service Definition**: Located at `/usr/local/etc/containers/zpool-creator.yaml`.
+1. **A Service Definition**: Located at `/usr/local/etc/containers/zpool-creator.yaml`.
 
-The service is configured to depend on the `zfs` extension and `configuration`
-availability. It is idempotent; if the pools already exist, the service exits
-successfully without doing anything.
+The service is configured to depend on the `zfs` extension and `configuration` availability.
+It is idempotent; if the pools already exist, the service exits successfully without doing anything.
 
 ## Usage
 
 ### Prerequisites
 
-This extension requires the standard Sidero Labs `zfs` extension to be installed
-on the Talos node, as it relies on the `zpool` binary provided by that
-extension. The versions of the `zfs` extension and the `zpool` binary must be
-compatible with the ZFS pool creation logic implemented in the extension.
+This extension requires the standard Sidero Labs `zfs` extension to be installed on the Talos node, as it relies on the `zpool` binary provided by that extension.
+The versions of the `zfs` extension and the `zpool` binary must be compatible with the ZFS pool creation logic implemented in the extension.
 
 ### Building the Extension
 
-Use the provided `Makefile` to build the extension image. The build process uses
-a multi-stage Dockerfile to compile the Go binary and package it into a minimal
-`scratch` image.
+Use the provided `Makefile` to build the extension image.
+The build process uses a multi-stage Dockerfile to compile the Go binary and package it into a minimal `scratch` image.
 
 ```sh
 # Build the extension image
@@ -48,9 +44,7 @@ Pushing requires a successful build, no failing tests, and a new tag.
 
 #### 1. Add the Extension
 
-System extensions should be included at image creation time using the Talos
-`imager` tool. Use the `--system-extension-image` flag to include this extension
-and the required ZFS extension.
+System extensions should be included at image creation time using the Talos `imager` tool. Use the `--system-extension-image` flag to include this extension and the required ZFS extension.
 
 ```sh
 docker run -t --rm -v .:/work --privileged ghcr.io/siderolabs/imager:v1.13.4 \
@@ -77,14 +71,11 @@ Remember to match the talos versions.
 
 #### 2. Configure the Service
 
-Once the node is running with the extension, configure it by applying an
-`ExtensionServiceConfig` document. This is where you specify the pools to create
-using nested environment variables.
+Once the node is running with the extension, configure it by applying an `ExtensionServiceConfig` document.
+This is where you specify the pools to create using nested environment variables.
 
-The extension will look for `ZPOOL_0_NAME`, `ZPOOL_1_NAME`, and so on, creating
-a pool for each index it finds. If one pool fails, the extension will log the
-error and continue to the next. It will exit with an error only after attempting
-all configurations.
+The extension will look for `ZPOOL_0_NAME`, `ZPOOL_1_NAME`, and so on, creating a pool for each index it finds. If one pool fails, the extension will log the error and continue to the next.
+It will exit with an error only after attempting all configurations.
 
 ##### Example: Create two pools
 
@@ -113,9 +104,8 @@ environment:
 
 ### Configuration Variables
 
-The extension is configured by defining one or more pools using nested
-environment variables. The process starts at pool index `0` and continues as long as
-a `ZPOOL_<n>_NAME` is found.
+The extension is configured by defining one or more pools using nested environment variables.
+The process starts at pool index `0` and continues as long as a `ZPOOL_<n>_NAME` is found.
 
 For each pool `n` (e.g., `0`, `1`, `2`, ...), the following variables are used:
 
@@ -132,7 +122,8 @@ For each pool `n` (e.g., `0`, `1`, `2`, ...), the following variables are used:
 
 ### Dynamic Disk Selection by Model
 
-Because block device names (like `/dev/nvme0n1`) are not guaranteed to be deterministic under Talos and can change during boot or installation, the extension supports selecting disks dynamically using their model name. This helps you avoid selecting or overwriting the disk used by Talos for its operating system.
+Because block device names (like `/dev/nvme0n1`) are not guaranteed to be deterministic under Talos and can change during boot or installation, the extension supports selecting disks dynamically using their model name.
+This helps you avoid selecting or overwriting the disk used by Talos for its operating system.
 
 To use dynamic selection, specify your disk models using the `ZPOOL_<pool>_DISK_<disk>_MODEL` variables:
 
@@ -146,19 +137,25 @@ environment:
   - ZPOOL_0_ASHIFT=12
 ```
 
-#### How it Works:
-1. **Normalization**: The extension normalizes both your target model pattern and the sysfs model name (retrieved from `/sys/block/<dev>/device/model`) by converting them to lowercase and trimming surrounding whitespace. Characters like dashes and underscores are preserved exactly as they are.
-2. **Wildcard & Substring Matching**: 
-   - If the pattern contains wildcards (`*` or `?`), it performs a standard glob match. For example, `Dell*` matches any model starting with "Dell", and `*CD8*` matches any model containing "CD8".
-   - If no wildcards are present, it falls back to a forgiving substring check. For example, `Samsung` matches any model containing "Samsung" anywhere in its name.
-3. **Partition Detection**: The extension automatically scans `/sys/block` and skips any disk that has existing partitions (e.g., the operating system disk).
-4. **Duplicate Prevention**: Each matching disk is tracked. If you specify multiple model entries (e.g., `Samsung*` and `Samsung*` to build a mirror), the extension will resolve them to distinct, unique physical disks.
+#### How it Works
+
+1. **Normalization**: The extension normalizes both your target model pattern and the sysfs model name (retrieved from `/sys/block/<dev>/device/model`) by converting them to lowercase and trimming surrounding whitespace.
+   Characters like dashes and underscores are preserved exactly as they are.
+1. **Wildcard & Substring Matching**: 
+   - If the pattern contains wildcards (`*` or `?`), it performs a standard glob match.
+     For example, `Dell*` matches any model starting with "Dell", and `*CD8*` matches any model containing "CD8".
+   - If no wildcards are present, it falls back to a forgiving substring check.
+     For example, `Samsung` matches any model containing "Samsung" anywhere in its name.
+1. **Partition Detection**: The extension automatically scans `/sys/block` and skips any disk that has existing partitions (e.g., the operating system disk).
+1. **Duplicate Prevention**: Each matching disk is tracked. If you specify multiple model entries (e.g., `Samsung*` and `Samsung*` to build a mirror), the extension will resolve them to distinct, unique physical disks.
 
 ### Disk Filtering by Size
 
-You can filter disks dynamically by capacity using indexed `ZPOOL_<n>_SIZE_<p>` environment variables. This is highly recommended to filter out smaller system/boot disks or target specific ranges (e.g., only matching 1 TB NVMe SSDs).
+You can filter disks dynamically by capacity using indexed `ZPOOL_<n>_SIZE_<p>` environment variables.
+This is highly recommended to filter out smaller system/boot disks or target specific ranges (e.g., only matching 1 TB NVMe SSDs).
 
-#### Syntax & Behavior:
+#### Syntax & Behavior
+
 - Conditions are strings containing a comparison operator and a value with **no spaces** in-between (e.g., `ZPOOL_0_SIZE_0=>=900GB`).
 - Multiple filters on the same pool act as a **logical AND** (e.g., `ZPOOL_0_SIZE_0=>=100GB` and `ZPOOL_0_SIZE_1=<=2TB` targets disks between 100 GB and 2 TB).
 - **Supported Operators**: `<` (less than), `>` (greater than), `<=` (less than or equal), `>=` (greater than or equal), `=` or `==` (equal to).
@@ -178,7 +175,7 @@ A global `ZPOOL_ASHIFT` can also be set as a default for all pools.
 
 ## Development
 
-The creator is written in Go to ensure compatibility with the Talos environment. 
+The creator is written in Go to ensure compatibility with the Talos environment.
 The source code and its Go module files are located in the `create-zpool/` directory.
 
 - `create-zpool/main.go`: The source code for the creator binary.
