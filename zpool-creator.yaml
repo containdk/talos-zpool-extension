@@ -5,6 +5,7 @@ depends:
   - path: /dev/zfs
   - service: ext-zfs-service
   - path: /usr/local/sbin/zpool
+  - path: /usr/local/sbin/zfs
   - configuration: true
 container:
   entrypoint: /create-zpool
@@ -13,6 +14,12 @@ container:
   mounts:
     - source: /usr/local/sbin/zpool
       destination: /usr/local/sbin/zpool
+      type: bind
+      options:
+        - rbind
+        - ro
+    - source: /usr/local/sbin/zfs
+      destination: /usr/local/sbin/zfs
       type: bind
       options:
         - rbind

@@ -31,11 +31,19 @@ type poolConfig struct {
 	Ashift      string     // ashift property for the pool, specifying the sector size alignment (e.g., "12" for 4K).
 }
 
+// zfsConfig holds the configuration for a single ZFS dataset (filesystem or volume).
+type zfsConfig struct {
+	Name       string // Name of the dataset/volume (e.g., "tank/my-fs").
+	Mountpoint string // Optional mountpoint property.
+	VolSize    string // Optional volume size (only for volumes).
+	Quota      string // Optional quota (only for filesystems).
+}
+
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
-	slog.Info("Talos ZFS Pool Extension: Starting ZFS Pool Creation")
+	slog.Info("Talos ZFS Extension: Starting Configuration Probing")
 
 	provider := &liveZFSProvider{}
 
@@ -46,32 +54,59 @@ func main() {
 	}
 	slog.Info("Found zpool binary", "path", zpoolPath)
 
+	zfsPath, err := provider.LookPath("zfs")
+	if err != nil {
+		slog.Error("zfs binary not found in PATH", "error", err, "PATH", os.Getenv("PATH"))
+		os.Exit(1)
+	}
+	slog.Info("Found zfs binary", "path", zfsPath)
+
 	configs := parsePoolConfigs()
-	if len(configs) == 0 {
-		slog.Info("No pool configurations found (e.g., ZPOOL_NAME_0 is not set). Exiting cleanly.")
+	zfsConfigs := parseZFSConfigs()
+
+	if len(configs) == 0 && len(zfsConfigs) == 0 {
+		slog.Info("No ZFS pools or dataset/volume configurations found. Exiting cleanly.")
 		os.Exit(0)
 	}
 
-	usedDisks := make(map[string]bool)
 	var allErrors []error
-	for _, config := range configs {
-		slog.Info("Processing pool configuration", "pool", config.Name)
-		err := createPool(provider, zpoolPath, config, usedDisks)
-		if err != nil {
-			slog.Error("Failed to create pool", "pool", config.Name, "error", err)
-			allErrors = append(allErrors, fmt.Errorf("pool %q: %w", config.Name, err))
+
+	// 1. Process ZFS Pools
+	if len(configs) > 0 {
+		slog.Info("Processing ZFS Pool configurations", "pool_count", len(configs))
+		usedDisks := make(map[string]bool)
+		for _, config := range configs {
+			slog.Info("Processing pool configuration", "pool", config.Name)
+			err := createPool(provider, zpoolPath, config, usedDisks)
+			if err != nil {
+				slog.Error("Failed to create pool", "pool", config.Name, "error", err)
+				allErrors = append(allErrors, fmt.Errorf("pool %q: %w", config.Name, err))
+			}
+		}
+	}
+
+	// 2. Process ZFS Datasets & Volumes
+	if len(zfsConfigs) > 0 {
+		slog.Info("Processing ZFS Dataset/Volume configurations", "count", len(zfsConfigs))
+		for _, zfsConfig := range zfsConfigs {
+			slog.Info("Processing ZFS dataset/volume configuration", "name", zfsConfig.Name)
+			err := createDataset(provider, zfsPath, zfsConfig)
+			if err != nil {
+				slog.Error("Failed to create ZFS dataset/volume", "name", zfsConfig.Name, "error", err)
+				allErrors = append(allErrors, fmt.Errorf("dataset/volume %q: %w", zfsConfig.Name, err))
+			}
 		}
 	}
 
 	if len(allErrors) > 0 {
-		slog.Error("One or more pools failed to create.", "error_count", len(allErrors))
+		slog.Error("One or more configurations failed.", "error_count", len(allErrors))
 		for _, e := range allErrors {
 			slog.Error("Detailed error", "error", e)
 		}
 		os.Exit(1)
 	}
 
-	slog.Info("Talos ZFS Pool Extension: All pools processed successfully. Finished.")
+	slog.Info("Talos ZFS Extension: All configurations processed successfully. Finished.")
 }
 
 // parsePoolConfigs reads nested indexed environment variables (ZPOOL_<n>_NAME, ZPOOL_<n>_DISK_<m>_DEV, etc.)
@@ -336,4 +371,77 @@ func diskMatchesSize(provider zfsProvider, path string, conds []sizeCondition) b
 		}
 	}
 	return true
+}
+
+// parseZFSConfigs reads ZFS dataset/volume configuration from environment variables (ZFS_<n>_NAME, etc.)
+func parseZFSConfigs() []zfsConfig {
+	var configs []zfsConfig
+
+	for i := range maxPools {
+		nameKey := fmt.Sprintf("ZFS_%d_NAME", i)
+		name := os.Getenv(nameKey)
+		if name == "" {
+			break
+		}
+
+		mountpointKey := fmt.Sprintf("ZFS_%d_MOUNTPOINT", i)
+		volSizeKey := fmt.Sprintf("ZFS_%d_VOL_SIZE", i)
+		quotaKey := fmt.Sprintf("ZFS_%d_QUOTA", i)
+
+		configs = append(configs, zfsConfig{
+			Name:       strings.TrimSpace(name),
+			Mountpoint: strings.TrimSpace(os.Getenv(mountpointKey)),
+			VolSize:    strings.TrimSpace(os.Getenv(volSizeKey)),
+			Quota:      strings.TrimSpace(os.Getenv(quotaKey)),
+		})
+	}
+
+	return configs
+}
+
+// createDataset handles the creation of a single ZFS filesystem or volume (zvol).
+func createDataset(provider zfsProvider, zfsPath string, config zfsConfig) error {
+	if config.Name == "" {
+		return fmt.Errorf("ZFS dataset name cannot be empty")
+	}
+
+	if config.VolSize != "" && config.Quota != "" {
+		return fmt.Errorf("VOL_SIZE and QUOTA are mutually exclusive (cannot define both on %s)", config.Name)
+	}
+
+	// Check if the dataset already exists
+	if provider.DatasetExists(config.Name, zfsPath) {
+		slog.Info("ZFS dataset/volume already exists. Nothing to do.", "name", config.Name)
+		return nil
+	}
+
+	slog.Info("Creating ZFS dataset/volume", "name", config.Name)
+
+	var args []string
+	args = append(args, "create")
+
+	if config.VolSize != "" {
+		// It's a volume (zvol)
+		if config.Mountpoint != "" {
+			return fmt.Errorf("MOUNTPOINT is not supported for ZFS volumes (zvols) like %s", config.Name)
+		}
+		args = append(args, "-V", config.VolSize, config.Name)
+	} else {
+		// It's a filesystem (dataset)
+		if config.Mountpoint != "" {
+			args = append(args, "-o", "mountpoint="+config.Mountpoint)
+		}
+		if config.Quota != "" {
+			args = append(args, "-o", "quota="+config.Quota)
+		}
+		args = append(args, config.Name)
+	}
+
+	output, err := provider.CreateDataset(zfsPath, args)
+	if err != nil {
+		return fmt.Errorf("failed to create ZFS dataset/volume %s: %w (output: %q)", config.Name, err, string(output))
+	}
+
+	slog.Info("ZFS dataset/volume created successfully", "name", config.Name)
+	return nil
 }

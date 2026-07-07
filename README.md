@@ -72,12 +72,12 @@ Remember to match the talos versions.
 #### 2. Configure the Service
 
 Once the node is running with the extension, configure it by applying an `ExtensionServiceConfig` document.
-This is where you specify the pools to create using nested environment variables.
+This is where you specify the pools, filesystems, and volumes to create using nested environment variables.
 
 The extension will look for `ZPOOL_0_NAME`, `ZPOOL_1_NAME`, and so on, creating a pool for each index it finds. If one pool fails, the extension will log the error and continue to the next.
 It will exit with an error only after attempting all configurations.
 
-##### Example: Create two pools
+##### Example: Create pools and datasets
 
 ```yaml
 apiVersion: v1alpha1
@@ -100,11 +100,21 @@ environment:
 
   # Global ASHIFT fallback (used if ZPOOL_<n>_ASHIFT is not set for a pool)
   - ZPOOL_ASHIFT=12
+
+  # ZFS filesystems (datasets) and volumes (zvols)
+  # ZFS filesystem with a custom mountpoint and storage quota
+  - ZFS_0_NAME=tank/my-dataset
+  - ZFS_0_MOUNTPOINT=/var/mnt/my-dataset
+  - ZFS_0_QUOTA=10G
+
+  # ZFS volume block device with a storage capacity size
+  - ZFS_1_NAME=tank/my-volume
+  - ZFS_1_VOL_SIZE=20G
 ```
 
 ### Configuration Variables
 
-The extension is configured by defining one or more pools using nested environment variables.
+The extension is configured by defining ZFS pools and datasets using nested environment variables.
 The process starts at pool index `0` and continues as long as a `ZPOOL_<n>_NAME` is found.
 
 For each pool `n` (e.g., `0`, `1`, `2`, ...), the following variables are used:
@@ -172,6 +182,23 @@ A global `ZPOOL_ASHIFT` can also be set as a default for all pools.
 | Variable | Default | Description |
 | :--- | :--- | :--- |
 | `ZPOOL_ASHIFT` | `12` | The global `ashift` value to use if a pool-specific `ZPOOL_<n>_ASHIFT` is not defined. |
+
+### ZFS Dataset & Volume Management
+
+In addition to ZFS pools, you can autonomously define and create ZFS filesystems (datasets) and ZFS volumes (zvols) using the nested `ZFS_<index>_` environment variables. The configuration is evaluated sequentially starting from dataset index `0` and continues as long as `ZFS_<n>_NAME` is defined.
+
+The extension automatically checks if each dataset or volume already exists (using `zfs list <name>`). If it exists, it is bypassed completely without modifying any of its current properties.
+
+#### Dataset Configuration Variables:
+
+| Variable | Required? | Description |
+| :--- | :--- | :--- |
+| `ZFS_<n>_NAME` | **Yes** | The full name of the dataset or volume to create (e.g., `ZFS_0_NAME=tank/my-dataset` or `ZFS_1_NAME=tank/my-volume`). |
+| `ZFS_<n>_MOUNTPOINT` | No | Specifies a custom mount point path for the ZFS filesystem (e.g., `ZFS_0_MOUNTPOINT=/var/mnt/my-dataset`). **Not supported for volumes (zvols).** |
+| `ZFS_<n>_QUOTA` | No | Sets a storage quota limit on the ZFS filesystem (e.g., `ZFS_0_QUOTA=10G`). **Not supported/mutually exclusive with volumes (zvols).** |
+| `ZFS_<n>_VOL_SIZE` | No | Specifies the storage capacity size for creating a ZFS volume (zvol) block device (e.g., `ZFS_1_VOL_SIZE=20G`). **Setting this makes the target a ZFS volume and is mutually exclusive with QUOTA and MOUNTPOINT.** |
+
+*Note: `ZFS_<n>_VOL_SIZE` and `ZFS_<n>_QUOTA` are mutually exclusive. If both are specified, dataset creation will fail with a configuration error.*
 
 ## Development
 

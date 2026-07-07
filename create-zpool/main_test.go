@@ -18,6 +18,8 @@ type mockZFSProvider struct {
 	ResolveDiskByModelFunc func(model string, sizeConds []sizeCondition, usedDisks map[string]bool) (string, error)
 	GetDiskSizeFunc        func(path string) (uint64, error)
 	EvalSymlinksFunc       func(path string) (string, error)
+	DatasetExistsFunc      func(name, zfsPath string) bool
+	CreateDatasetFunc      func(zfsPath string, args []string) ([]byte, error)
 }
 
 func (m *mockZFSProvider) LookPath(file string) (string, error) {
@@ -76,6 +78,20 @@ func (m *mockZFSProvider) EvalSymlinks(path string) (string, error) {
 		return m.EvalSymlinksFunc(path)
 	}
 	return path, nil
+}
+
+func (m *mockZFSProvider) DatasetExists(name, zfsPath string) bool {
+	if m.DatasetExistsFunc != nil {
+		return m.DatasetExistsFunc(name, zfsPath)
+	}
+	return false
+}
+
+func (m *mockZFSProvider) CreateDataset(zfsPath string, args []string) ([]byte, error) {
+	if m.CreateDatasetFunc != nil {
+		return m.CreateDatasetFunc(zfsPath, args)
+	}
+	return []byte("Dataset created successfully"), nil
 }
 
 // --- Unit Tests for Validation Functions ---
@@ -746,5 +762,160 @@ func TestCreatePool_SymlinkDuplicateTracking(t *testing.T) {
 	}
 	if createPoolDisks[0] != "/dev/sda" {
 		t.Errorf("Expected disk '/dev/sda' to be used, but got %q", createPoolDisks[0])
+	}
+}
+
+func TestParseZFSConfigs(t *testing.T) {
+	os.Setenv("ZFS_0_NAME", "tank/fs0")
+	os.Setenv("ZFS_0_MOUNTPOINT", "/mnt/fs0")
+	os.Setenv("ZFS_0_QUOTA", "10G")
+
+	os.Setenv("ZFS_1_NAME", "tank/vol0")
+	os.Setenv("ZFS_1_VOL_SIZE", "20G")
+
+	defer func() {
+		os.Unsetenv("ZFS_0_NAME")
+		os.Unsetenv("ZFS_0_MOUNTPOINT")
+		os.Unsetenv("ZFS_0_QUOTA")
+		os.Unsetenv("ZFS_1_NAME")
+		os.Unsetenv("ZFS_1_VOL_SIZE")
+	}()
+
+	configs := parseZFSConfigs()
+
+	if len(configs) != 2 {
+		t.Fatalf("Expected 2 ZFS configs, but got %d", len(configs))
+	}
+
+	if configs[0].Name != "tank/fs0" || configs[0].Mountpoint != "/mnt/fs0" || configs[0].Quota != "10G" || configs[0].VolSize != "" {
+		t.Errorf("ZFS config 0 parsed incorrectly: got %+v", configs[0])
+	}
+
+	if configs[1].Name != "tank/vol0" || configs[1].VolSize != "20G" || configs[1].Mountpoint != "" || configs[1].Quota != "" {
+		t.Errorf("ZFS config 1 parsed incorrectly: got %+v", configs[1])
+	}
+}
+
+func TestCreateDataset_Filesystem(t *testing.T) {
+	mockProvider := &mockZFSProvider{}
+
+	config := zfsConfig{
+		Name:       "tank/fs",
+		Mountpoint: "/mnt/fs",
+		Quota:      "5G",
+	}
+
+	var createArgs []string
+	mockProvider.CreateDatasetFunc = func(zfsPath string, args []string) ([]byte, error) {
+		createArgs = args
+		return nil, nil
+	}
+
+	err := createDataset(mockProvider, "/fake/zfs", config)
+	if err != nil {
+		t.Fatalf("createDataset failed: %v", err)
+	}
+
+	expectedArgs := []string{"create", "-o", "mountpoint=/mnt/fs", "-o", "quota=5G", "tank/fs"}
+	if len(createArgs) != len(expectedArgs) {
+		t.Fatalf("Expected %d arguments, but got %d (%v)", len(expectedArgs), len(createArgs), createArgs)
+	}
+	for i, arg := range createArgs {
+		if arg != expectedArgs[i] {
+			t.Errorf("Expected arg %d to be %q, but got %q", i, expectedArgs[i], arg)
+		}
+	}
+}
+
+func TestCreateDataset_Volume(t *testing.T) {
+	mockProvider := &mockZFSProvider{}
+
+	config := zfsConfig{
+		Name:    "tank/vol",
+		VolSize: "15G",
+	}
+
+	var createArgs []string
+	mockProvider.CreateDatasetFunc = func(zfsPath string, args []string) ([]byte, error) {
+		createArgs = args
+		return nil, nil
+	}
+
+	err := createDataset(mockProvider, "/fake/zfs", config)
+	if err != nil {
+		t.Fatalf("createDataset failed: %v", err)
+	}
+
+	expectedArgs := []string{"create", "-V", "15G", "tank/vol"}
+	if len(createArgs) != len(expectedArgs) {
+		t.Fatalf("Expected %d arguments, but got %d (%v)", len(expectedArgs), len(createArgs), createArgs)
+	}
+	for i, arg := range createArgs {
+		if arg != expectedArgs[i] {
+			t.Errorf("Expected arg %d to be %q, but got %q", i, expectedArgs[i], arg)
+		}
+	}
+}
+
+func TestCreateDataset_MutuallyExclusive(t *testing.T) {
+	mockProvider := &mockZFSProvider{}
+
+	config := zfsConfig{
+		Name:    "tank/invalid",
+		VolSize: "10G",
+		Quota:   "10G",
+	}
+
+	err := createDataset(mockProvider, "/fake/zfs", config)
+	if err == nil {
+		t.Fatal("Expected error due to mutually exclusive parameters, but got nil")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("Unexpected error message: %v", err)
+	}
+}
+
+func TestCreateDataset_VolumeWithMountpoint(t *testing.T) {
+	mockProvider := &mockZFSProvider{}
+
+	config := zfsConfig{
+		Name:       "tank/invalid-vol",
+		VolSize:    "10G",
+		Mountpoint: "/mnt",
+	}
+
+	err := createDataset(mockProvider, "/fake/zfs", config)
+	if err == nil {
+		t.Fatal("Expected error due to volume with mountpoint, but got nil")
+	}
+	if !strings.Contains(err.Error(), "not supported for ZFS volumes") {
+		t.Errorf("Unexpected error message: %v", err)
+	}
+}
+
+func TestCreateDataset_AlreadyExists(t *testing.T) {
+	mockProvider := &mockZFSProvider{
+		DatasetExistsFunc: func(name, zfsPath string) bool {
+			return true // Simulating dataset already exists
+		},
+	}
+
+	config := zfsConfig{
+		Name: "tank/existing",
+	}
+
+	createCalled := false
+	mockProvider.CreateDatasetFunc = func(zfsPath string, args []string) ([]byte, error) {
+		createCalled = true
+		return nil, nil
+	}
+
+	err := createDataset(mockProvider, "/fake/zfs", config)
+	if err != nil {
+		t.Fatalf("Expected no error, but got %v", err)
+	}
+
+	if createCalled {
+		t.Fatal("Expected CreateDataset NOT to be called since dataset already exists")
 	}
 }
