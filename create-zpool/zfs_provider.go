@@ -139,6 +139,11 @@ type zfsProvider interface {
 	GetDiskSize(path string) (uint64, error)
 	// EvalSymlinks evaluates any symbolic links to return the canonical path.
 	EvalSymlinks(path string) (string, error)
+	// DatasetExists checks if a ZFS dataset/volume with the given name already exists.
+	DatasetExists(name, zfsPath string) bool
+	// CreateDataset executes the `zfs create` command with the given arguments.
+	// It returns the combined stdout/stderr output and any execution error.
+	CreateDataset(zfsPath string, args []string) ([]byte, error)
 }
 
 // liveZFSProvider is the concrete implementation of ZFSProvider that executes
@@ -153,6 +158,20 @@ func (p *liveZFSProvider) LookPath(file string) (string, error) {
 // EvalSymlinks wraps filepath.EvalSymlinks.
 func (p *liveZFSProvider) EvalSymlinks(path string) (string, error) {
 	return filepath.EvalSymlinks(path)
+}
+
+// DatasetExists checks if a ZFS dataset/volume with the given name already exists.
+func (p *liveZFSProvider) DatasetExists(name, zfsPath string) bool {
+	// #nosec G204: Intentionally executing system binary with dynamic dataset name
+	cmd := exec.Command(zfsPath, "list", name)
+	return cmd.Run() == nil
+}
+
+// CreateDataset executes the `zfs create` command with the given arguments.
+func (p *liveZFSProvider) CreateDataset(zfsPath string, args []string) ([]byte, error) {
+	// #nosec G204: Intentionally executing system binary with user-configured arguments
+	cmd := exec.Command(zfsPath, args...)
+	return cmd.CombinedOutput()
 }
 
 // PoolExists checks if a ZFS pool with the given name already exists.
