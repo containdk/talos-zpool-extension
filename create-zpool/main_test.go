@@ -919,3 +919,43 @@ func TestCreateDataset_AlreadyExists(t *testing.T) {
 		t.Fatal("Expected CreateDataset NOT to be called since dataset already exists")
 	}
 }
+
+func TestParseZFSConfigs_Limit(t *testing.T) {
+	for i := 0; i <= maxDatasets; i++ {
+		os.Setenv(fmt.Sprintf("ZFS_%d_NAME", i), fmt.Sprintf("tank/dataset%d", i))
+	}
+	defer func() {
+		for i := 0; i <= maxDatasets; i++ {
+			os.Unsetenv(fmt.Sprintf("ZFS_%d_NAME", i))
+		}
+	}()
+
+	configs := parseZFSConfigs()
+
+	if len(configs) != maxDatasets {
+		t.Fatalf("Expected %d ZFS configs (limit), but got %d", maxDatasets, len(configs))
+	}
+}
+
+func TestCreateDataset_ValidationUpfront(t *testing.T) {
+	mockProvider := &mockZFSProvider{
+		DatasetExistsFunc: func(name, zfsPath string) bool {
+			return true // Simulating dataset already exists on system
+		},
+	}
+
+	config := zfsConfig{
+		Name:       "tank/invalid-vol",
+		VolSize:    "10G",
+		Mountpoint: "/mnt", // Invalid: zvol can't have mountpoint
+	}
+
+	// This should STILL return an error because validation is upfront before existence checks
+	err := createDataset(mockProvider, "/fake/zfs", config)
+	if err == nil {
+		t.Fatal("Expected error due to invalid volume configuration, but got nil even though dataset allegedly already exists")
+	}
+	if !strings.Contains(err.Error(), "not supported for ZFS volumes") {
+		t.Errorf("Unexpected error message: %v", err)
+	}
+}

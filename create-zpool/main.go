@@ -13,7 +13,8 @@ import (
 const (
 	defaultPoolName = "tank"
 	defaultAshift   = "12"
-	maxPools        = 42 // Sanity limit for the number of pools to create.
+	maxPools        = 42  // Sanity limit for the number of pools to create.
+	maxDatasets     = 100 // Sanity limit for the number of ZFS datasets/volumes to create.
 )
 
 // diskSpec defines a target disk declaration which can be defined by explicit path (dev) or dynamic query (model).
@@ -377,9 +378,9 @@ func diskMatchesSize(provider zfsProvider, path string, conds []sizeCondition) b
 func parseZFSConfigs() []zfsConfig {
 	var configs []zfsConfig
 
-	for i := range maxPools {
+	for i := range maxDatasets {
 		nameKey := fmt.Sprintf("ZFS_%d_NAME", i)
-		name := os.Getenv(nameKey)
+		name := strings.TrimSpace(os.Getenv(nameKey))
 		if name == "" {
 			break
 		}
@@ -389,11 +390,16 @@ func parseZFSConfigs() []zfsConfig {
 		quotaKey := fmt.Sprintf("ZFS_%d_QUOTA", i)
 
 		configs = append(configs, zfsConfig{
-			Name:       strings.TrimSpace(name),
+			Name:       name,
 			Mountpoint: strings.TrimSpace(os.Getenv(mountpointKey)),
 			VolSize:    strings.TrimSpace(os.Getenv(volSizeKey)),
 			Quota:      strings.TrimSpace(os.Getenv(quotaKey)),
 		})
+	}
+
+	// After the loop, check if the reason for stopping was hitting the limit.
+	if strings.TrimSpace(os.Getenv(fmt.Sprintf("ZFS_%d_NAME", maxDatasets))) != "" {
+		slog.Warn("Reached the maximum number of ZFS datasets allowed, ignoring further configurations.", "limit", maxDatasets)
 	}
 
 	return configs
@@ -409,6 +415,10 @@ func createDataset(provider zfsProvider, zfsPath string, config zfsConfig) error
 		return fmt.Errorf("VOL_SIZE and QUOTA are mutually exclusive (cannot define both on %s)", config.Name)
 	}
 
+	if config.VolSize != "" && config.Mountpoint != "" {
+		return fmt.Errorf("MOUNTPOINT is not supported for ZFS volumes (zvols) like %s", config.Name)
+	}
+
 	// Check if the dataset already exists
 	if provider.DatasetExists(config.Name, zfsPath) {
 		slog.Info("ZFS dataset/volume already exists. Nothing to do.", "name", config.Name)
@@ -422,9 +432,6 @@ func createDataset(provider zfsProvider, zfsPath string, config zfsConfig) error
 
 	if config.VolSize != "" {
 		// It's a volume (zvol)
-		if config.Mountpoint != "" {
-			return fmt.Errorf("MOUNTPOINT is not supported for ZFS volumes (zvols) like %s", config.Name)
-		}
 		args = append(args, "-V", config.VolSize, config.Name)
 	} else {
 		// It's a filesystem (dataset)
