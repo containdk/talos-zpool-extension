@@ -14,7 +14,7 @@ version: v1alpha1
 metadata:
   name: zpool-creator
   version: "${VERSION}-${TALOS_VERSION}"
-  author: KimNorgaard
+  author: Netic
   description: |
     [extra] This system extension provides a service to create zpools on boot.
   compatibility:
