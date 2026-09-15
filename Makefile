@@ -13,7 +13,17 @@ FULL_VERSION = $(VERSION)-$(TALOS_VERSION)
 
 IMAGE_URL = $(REGISTRY)/$(IMAGE_NAME)
 
-.PHONY: all build push clean test check-git-clean check-release-tag
+# Multi-platform builds require the docker-container driver; the "docker"
+# driver cannot produce multi-arch manifests. If the currently selected buildx
+# builder uses the docker driver (typical for a plain local Docker/Colima
+# setup), fall back to a dedicated container builder, created on demand.
+# Where a container builder is already selected (e.g. CI), this resolves to
+# empty and the selected builder is used as-is.
+FALLBACK_BUILDER ?= multiarch
+BUILDER = $(shell docker buildx inspect 2>/dev/null | awk -F': *' '/^Driver:/{print $$2}' | grep -qx docker && echo $(FALLBACK_BUILDER))
+BUILDER_FLAG = $(if $(BUILDER),--builder $(BUILDER))
+
+.PHONY: all build push clean test check-git-clean check-release-tag buildx-builder
 
 all: build
 
@@ -27,10 +37,18 @@ build:
 		-t $(IMAGE_URL):latest \
 		.
 
+# Ensure a multi-platform capable builder exists
+buildx-builder:
+	@builder='$(BUILDER)'; \
+	if [ -n "$$builder" ] && ! docker buildx inspect "$$builder" >/dev/null 2>&1; then \
+		echo "Creating buildx builder '$$builder' (docker-container driver)..."; \
+		docker buildx create --name "$$builder" --driver docker-container --bootstrap >/dev/null; \
+	fi
+
 # Build and push the multi-platform manifest for both amd64 and arm64
-push: test check-git-clean check-release-tag
+push: test check-git-clean check-release-tag buildx-builder
 	@echo "Building and pushing extension image for $(PLATFORMS) as $(IMAGE_URL):$(FULL_VERSION)"
-	docker buildx build --platform $(PLATFORMS) \
+	docker buildx build $(BUILDER_FLAG) --platform $(PLATFORMS) \
 		--build-arg VERSION=$(VERSION) \
 		--build-arg TALOS_VERSION=$(TALOS_VERSION) \
 		-t $(IMAGE_URL):$(FULL_VERSION) \
