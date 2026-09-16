@@ -1,0 +1,105 @@
+---
+name: Renovate Auto-Publish
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "Makefile"
+
+jobs:
+  verify:
+    name: Verify TALOS_VERSION bump
+    if: github.actor == 'contain-renovate[bot]'
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.verify.outputs.proceed }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 2
+
+      - name: Verify Makefile exclusivity and regex
+        id: verify
+        run: |
+          # Only republish when the commit touches nothing but the pinned Talos
+          # series, so an unrelated Makefile edit never ships an image.
+          FILES=$(git diff-tree --no-commit-id --name-only -r HEAD)
+          COUNT=$(echo "$FILES" | wc -l)
+
+          # -U0 so only added/changed lines are considered
+          MATCH=$(git diff HEAD^ HEAD -U0 -- Makefile | grep "^\+" | grep -qE "TALOS_VERSION \?= .*" && echo "yes" || echo "no")
+
+          if [ "$COUNT" -eq 1 ] && [ "$FILES" = "Makefile" ] && [ "$MATCH" = "yes" ]; then
+            echo "Proceeding with publish: valid TALOS_VERSION bump detected."
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Condition failed. Count: $COUNT, Files: $FILES, Match: $MATCH"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    name: Publish
+    needs: verify
+    if: needs.verify.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Resolve versions
+        id: vars
+        run: |
+          # The app version stays at the last release tag; only the Talos
+          # series moves, giving a new <app version>-<talos series> image tag.
+          TALOS_VERSION=$(grep -E '^TALOS_VERSION \?=' Makefile | awk '{print $3}')
+          VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//')
+          {
+            echo "talos_version=$TALOS_VERSION"
+            echo "version=$VERSION"
+            echo "full_version=$VERSION-$TALOS_VERSION"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4
+        with:
+          platforms: amd64,arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=${{ steps.vars.outputs.full_version }}
+            type=raw,value=latest
+
+      - name: Build and push
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.vars.outputs.version }}
+            TALOS_VERSION=${{ steps.vars.outputs.talos_version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
