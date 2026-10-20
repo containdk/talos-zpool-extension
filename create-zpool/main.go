@@ -260,10 +260,21 @@ func createPool(provider zfsProvider, zpoolPath string, config poolConfig, usedD
 	slog.Info("Creating ZFS pool", "pool", config.Name, "ashift", config.Ashift, "type", config.Type)
 
 	args := []string{"create", "-m", "/var/mnt/" + config.Name, "-o", "ashift=" + config.Ashift, config.Name}
-	if config.Type != "" {
+	switch config.Type {
+	case "":
+		args = append(args, disksToUse...)
+	case "mirror":
+		// Stripe across two-way mirrors in declaration order. An odd disk would end up unmirrored.
+		if len(disksToUse)%2 != 0 {
+			return fmt.Errorf("mirror requires an even number of disks, found %d: %v", len(disksToUse), disksToUse)
+		}
+		for i := 0; i < len(disksToUse); i += 2 {
+			args = append(args, "mirror", disksToUse[i], disksToUse[i+1])
+		}
+	default:
 		args = append(args, config.Type)
+		args = append(args, disksToUse...)
 	}
-	args = append(args, disksToUse...)
 
 	slog.Info("Running zpool command", "pool", config.Name, "args", strings.Join(args, " "))
 	output, err := provider.CreatePool(zpoolPath, args)

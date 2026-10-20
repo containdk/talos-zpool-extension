@@ -314,6 +314,36 @@ func TestCreatePool_Success(t *testing.T) {
 	}
 }
 
+func TestCreatePool_MirrorPairs(t *testing.T) {
+	var gotArgs []string
+	mockProvider := &mockZFSProvider{
+		CreatePoolFunc: func(zpoolPath string, args []string) ([]byte, error) {
+			gotArgs = args
+			return nil, nil
+		},
+	}
+	config := poolConfig{
+		Name:   "csi",
+		Type:   "mirror",
+		Disks:  []diskSpec{{Dev: "/dev/nvme1n1"}, {Dev: "/dev/nvme2n1"}, {Dev: "/dev/nvme3n1"}, {Dev: "/dev/nvme4n1"}},
+		Ashift: "12",
+	}
+
+	if err := createPool(mockProvider, "/fake/zpool", config, make(map[string]bool)); err != nil {
+		t.Fatalf("createPool() returned an unexpected error: %v", err)
+	}
+
+	want := "create -m /var/mnt/csi -o ashift=12 csi mirror /dev/nvme1n1 /dev/nvme2n1 mirror /dev/nvme3n1 /dev/nvme4n1"
+	if got := strings.Join(gotArgs, " "); got != want {
+		t.Errorf("zpool args:\n got: %s\nwant: %s", got, want)
+	}
+
+	config.Disks = config.Disks[:3]
+	if err := createPool(mockProvider, "/fake/zpool", config, make(map[string]bool)); err == nil {
+		t.Error("createPool() with an odd number of mirror disks should fail")
+	}
+}
+
 func TestCreatePool_PartialFailure(t *testing.T) {
 	mockProvider := &mockZFSProvider{
 		CreatePoolFunc: func(zpoolPath string, args []string) ([]byte, error) {

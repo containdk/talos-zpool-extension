@@ -122,7 +122,7 @@ For each pool `n` (e.g., `0`, `1`, `2`, ...), the following variables are used:
 | Variable | Required? | Description |
 | :--- | :--- | :--- |
 | `ZPOOL_<n>_NAME` | **Yes** | The name of the ZFS pool to create (e.g., `ZPOOL_0_NAME=tank`). |
-| `ZPOOL_<n>_TYPE` | No | The vdev type (`mirror`, `raidz`, `raidz1`, `raidz2`, `raidz3`, `draid`, etc.). If empty, disks are added as individual vdevs. |
+| `ZPOOL_<n>_TYPE` | No | The vdev type (`mirror`, `raidz`, `raidz1`, `raidz2`, `raidz3`, `draid`, etc.). If empty, disks are added as individual vdevs. `mirror` groups disks into two-way mirrors in declaration order (disks 0+1, 2+3, ...) and requires an even disk count. |
 | `ZPOOL_<n>_ASHIFT` | No | The `ashift` value for this specific pool. If not set, it falls back to the global `ZPOOL_ASHIFT` value. |
 | `ZPOOL_<n>_DISK_<m>_DEV` | No | Explicit block device path for the `m`-th disk of pool `n` (e.g., `ZPOOL_0_DISK_0_DEV=/dev/sda`). |
 | `ZPOOL_<n>_DISK_<m>_MODEL` | No | Dynamic model matching pattern for the `m`-th disk of pool `n` (e.g., `ZPOOL_0_DISK_1_MODEL=Dell DC NVMe CD8*`). Supports wildcards. |
