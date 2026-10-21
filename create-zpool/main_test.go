@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -226,6 +227,7 @@ func TestParsePoolConfigs(t *testing.T) {
 	os.Setenv("ZPOOL_1_NAME", "tank1")
 	os.Setenv("ZPOOL_1_DISK_0_MODEL", "Samsung*")
 	os.Setenv("ZPOOL_1_DISK_1_MODEL", "Dell*")
+	t.Setenv("ZPOOL_1_DISK_1_SIZE", ">=800GB")
 	os.Setenv("ZPOOL_ASHIFT", "12") // Global ashift
 
 	// Clean up env vars after test
@@ -258,6 +260,9 @@ func TestParsePoolConfigs(t *testing.T) {
 	}
 	if len(configs[0].SizeFilters) != 1 || configs[0].SizeFilters[0] != ">=900GB" {
 		t.Errorf("config 0 size filters are incorrect: got %v", configs[0].SizeFilters)
+	}
+	if configs[1].Disks[0].Size != "" || configs[1].Disks[1].Size != ">=800GB" {
+		t.Errorf("config 1 per-disk sizes are incorrect: got %v", configs[1].Disks)
 	}
 
 	// Check config 1 (by model, uses global ashift, empty type)
@@ -341,6 +346,53 @@ func TestCreatePool_MirrorPairs(t *testing.T) {
 	config.Disks = config.Disks[:3]
 	if err := createPool(mockProvider, "/fake/zpool", config, make(map[string]bool)); err == nil {
 		t.Error("createPool() with an odd number of mirror disks should fail")
+	}
+}
+
+func TestCreatePool_PerDiskSize(t *testing.T) {
+	var modelConds []sizeCondition
+	var gotArgs []string
+	mockProvider := &mockZFSProvider{
+		GetDiskSizeFunc: func(path string) (uint64, error) {
+			return 500 * 1000 * 1000 * 1000, nil
+		},
+		ResolveDiskByModelFunc: func(model string, sizeConds []sizeCondition, usedDisks map[string]bool) (string, error) {
+			modelConds = sizeConds
+			return "/dev/nvme0n1", nil
+		},
+		CreatePoolFunc: func(zpoolPath string, args []string) ([]byte, error) {
+			gotArgs = args
+			return nil, nil
+		},
+	}
+	config := poolConfig{
+		Name: "csi",
+		Disks: []diskSpec{
+			{Dev: "/dev/sda", Size: ">=800GB"},
+			{Dev: "/dev/sdb"},
+			{Model: "Dell*", Size: "<=2TB"},
+		},
+		SizeFilters: []string{">=100GB"},
+		Ashift:      "12",
+	}
+
+	if err := createPool(mockProvider, "/fake/zpool", config, make(map[string]bool)); err != nil {
+		t.Fatalf("createPool() returned an unexpected error: %v", err)
+	}
+
+	// The 500 GB /dev/sda fails its own >=800GB, and /dev/sdb gets only the pool-wide >=100GB.
+	want := "create -m /var/mnt/csi -o ashift=12 csi /dev/sdb /dev/nvme0n1"
+	if got := strings.Join(gotArgs, " "); got != want {
+		t.Errorf("zpool args:\n got: %s\nwant: %s", got, want)
+	}
+	wantConds := []sizeCondition{{">=", 100 * 1000 * 1000 * 1000}, {"<=", 2 * 1000 * 1000 * 1000 * 1000}}
+	if !slices.Equal(modelConds, wantConds) {
+		t.Errorf("model disk size conditions = %v, want %v", modelConds, wantConds)
+	}
+
+	config.Disks[1].Size = "800GB"
+	if err := createPool(mockProvider, "/fake/zpool", config, make(map[string]bool)); err == nil {
+		t.Error("createPool() with an invalid per-disk size condition should fail")
 	}
 }
 
@@ -603,11 +655,16 @@ func TestParseSizeInBytes(t *testing.T) {
 	}{
 		{"100", 100, false},
 		{"100B", 100, false},
-		{"1KB", 1024, false},
-		{"1.5KB", 1536, false},
-		{"10MB", 10 * 1024 * 1024, false},
-		{"960GB", 960 * 1024 * 1024 * 1024, false},
-		{"1.2TB", 1319413953331, false}, // 1.2 * 1024^4 = 1319413953331.2 -> 1319413953331
+		{"1KB", 1000, false},
+		{"1.5KB", 1500, false},
+		{"10MB", 10 * 1000 * 1000, false},
+		{"960GB", 960 * 1000 * 1000 * 1000, false},
+		{"1.2TB", 1200 * 1000 * 1000 * 1000, false},
+		{"1KiB", 1024, false},
+		{"1.5K", 1536, false},
+		{"10MiB", 10 * 1024 * 1024, false},
+		{"960gib", 960 * 1024 * 1024 * 1024, false},
+		{"1.2TiB", 1319413953331, false}, // 1.2 * 1024^4 = 1319413953331.2 -> 1319413953331
 		{"", 0, true},
 		{"GB", 0, true},
 		{"10XB", 0, true},
@@ -637,11 +694,11 @@ func TestParseSizeCondition(t *testing.T) {
 		target uint64
 		fail   bool
 	}{
-		{"<=10GB", "<=", 10 * 1024 * 1024 * 1024, false},
+		{"<=10GB", "<=", 10 * 1000 * 1000 * 1000, false},
 		{">=100B", ">=", 100, false},
-		{"=1TB", "=", 1024 * 1024 * 1024 * 1024, false},
-		{"==500MB", "==", 500 * 1024 * 1024, false},
-		{"<5.5GB", "<", 5905580032, false}, // 5.5 * 1024^3
+		{"=1TiB", "=", 1024 * 1024 * 1024 * 1024, false},
+		{"==500MB", "==", 500 * 1000 * 1000, false},
+		{"<5.5GiB", "<", 5905580032, false}, // 5.5 * 1024^3
 		{">10", ">", 10, false},
 		{"10GB", "", 0, true},
 		{"<>10GB", "", 0, true},

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -21,6 +22,7 @@ const (
 type diskSpec struct {
 	Dev   string // Explicit block device path (e.g. "/dev/sda")
 	Model string // Dynamic disk model query (e.g. "Dell DC NVMe CD8*")
+	Size  string // Optional size condition for this disk only (e.g. ">=800GB"), applied with the pool-wide filters.
 }
 
 // poolConfig holds the configuration for a single ZFS pool.
@@ -141,6 +143,7 @@ func parsePoolConfigs() []poolConfig {
 		for j := 0; ; j++ {
 			devKey := fmt.Sprintf("ZPOOL_%d_DISK_%d_DEV", i, j)
 			modelKey := fmt.Sprintf("ZPOOL_%d_DISK_%d_MODEL", i, j)
+			sizeKey := fmt.Sprintf("ZPOOL_%d_DISK_%d_SIZE", i, j)
 
 			devVal := os.Getenv(devKey)
 			modelVal := os.Getenv(modelKey)
@@ -152,6 +155,7 @@ func parsePoolConfigs() []poolConfig {
 			config.Disks = append(config.Disks, diskSpec{
 				Dev:   strings.TrimSpace(devVal),
 				Model: strings.TrimSpace(modelVal),
+				Size:  strings.TrimSpace(os.Getenv(sizeKey)),
 			})
 		}
 
@@ -209,10 +213,25 @@ func createPool(provider zfsProvider, zpoolPath string, config poolConfig, usedD
 		sizeConds = append(sizeConds, cond)
 	}
 
+	// Parse every per-disk size condition before probing, so a bad one fails the pool without claiming disks.
+	diskConds := make([][]sizeCondition, len(config.Disks))
+	for i, disk := range config.Disks {
+		diskConds[i] = slices.Clip(sizeConds)
+		if disk.Size == "" {
+			continue
+		}
+		cond, err := parseSizeCondition(disk.Size)
+		if err != nil {
+			return fmt.Errorf("invalid size condition %q for disk %d: %w", disk.Size, i, err)
+		}
+		diskConds[i] = append(diskConds[i], cond)
+	}
+
 	// Probe for specified disks in the exact ordered declaration
 	slog.Info("Probing specified disks", "pool", config.Name, "disks", config.Disks)
 	var disksToUse []string
-	for _, disk := range config.Disks {
+	for i, disk := range config.Disks {
+		sizeConds := diskConds[i]
 		if disk.Dev != "" {
 			canonicalDev, err := provider.EvalSymlinks(disk.Dev)
 			if err != nil {

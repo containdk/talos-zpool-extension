@@ -62,17 +62,26 @@ func parseSizeInBytes(s string) (uint64, error) {
 		return 0, fmt.Errorf("failed to parse numeric size %q: %w", numStr, err)
 	}
 
+	// SI units are decimal, as in the Talos CEL disk selectors, so one selector string means the same size in both.
 	var multiplier float64 = 1
 	switch unitStr {
 	case "", "B":
 		multiplier = 1
-	case "K", "KB", "KIB":
+	case "KB":
+		multiplier = 1000
+	case "MB":
+		multiplier = 1000 * 1000
+	case "GB":
+		multiplier = 1000 * 1000 * 1000
+	case "TB":
+		multiplier = 1000 * 1000 * 1000 * 1000
+	case "K", "KIB":
 		multiplier = 1024
-	case "M", "MB", "MIB":
+	case "M", "MIB":
 		multiplier = 1024 * 1024
-	case "G", "GB", "GIB":
+	case "G", "GIB":
 		multiplier = 1024 * 1024 * 1024
-	case "T", "TB", "TIB":
+	case "T", "TIB":
 		multiplier = 1024 * 1024 * 1024 * 1024
 	default:
 		return 0, fmt.Errorf("unknown size unit %q", unitStr)
