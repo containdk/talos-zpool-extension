@@ -217,33 +217,18 @@ func FuzzIsValidZpoolName(f *testing.F) {
 
 func TestParsePoolConfigs(t *testing.T) {
 	// Set environment variables for the test
-	os.Setenv("ZPOOL_0_NAME", "tank0")
-	os.Setenv("ZPOOL_0_TYPE", "mirror")
-	os.Setenv("ZPOOL_0_ASHIFT", "13")
-	os.Setenv("ZPOOL_0_DISK_0_DEV", "/dev/sda")
-	os.Setenv("ZPOOL_0_DISK_1_DEV", "/dev/sdb")
-	os.Setenv("ZPOOL_0_SIZE_0", ">=900GB")
+	t.Setenv("ZPOOL_0_NAME", "tank0")
+	t.Setenv("ZPOOL_0_TYPE", "mirror")
+	t.Setenv("ZPOOL_0_ASHIFT", "13")
+	t.Setenv("ZPOOL_0_DISK_0_DEV", "/dev/sda")
+	t.Setenv("ZPOOL_0_DISK_1_DEV", "/dev/sdb")
+	t.Setenv("ZPOOL_0_SIZE_0", ">=900GB")
 
-	os.Setenv("ZPOOL_1_NAME", "tank1")
-	os.Setenv("ZPOOL_1_DISK_0_MODEL", "Samsung*")
-	os.Setenv("ZPOOL_1_DISK_1_MODEL", "Dell*")
+	t.Setenv("ZPOOL_1_NAME", "tank1")
+	t.Setenv("ZPOOL_1_DISK_0_MODEL", "Samsung*")
+	t.Setenv("ZPOOL_1_DISK_1_MODEL", "Dell*")
 	t.Setenv("ZPOOL_1_DISK_1_SIZE", ">=800GB")
-	os.Setenv("ZPOOL_ASHIFT", "12") // Global ashift
-
-	// Clean up env vars after test
-	defer func() {
-		os.Unsetenv("ZPOOL_0_NAME")
-		os.Unsetenv("ZPOOL_0_TYPE")
-		os.Unsetenv("ZPOOL_0_ASHIFT")
-		os.Unsetenv("ZPOOL_0_DISK_0_DEV")
-		os.Unsetenv("ZPOOL_0_DISK_1_DEV")
-		os.Unsetenv("ZPOOL_0_SIZE_0")
-
-		os.Unsetenv("ZPOOL_1_NAME")
-		os.Unsetenv("ZPOOL_1_DISK_0_MODEL")
-		os.Unsetenv("ZPOOL_1_DISK_1_MODEL")
-		os.Unsetenv("ZPOOL_ASHIFT")
-	}()
+	t.Setenv("ZPOOL_ASHIFT", "12") // Global ashift
 
 	configs := parsePoolConfigs()
 
@@ -277,13 +262,8 @@ func TestParsePoolConfigs(t *testing.T) {
 func TestParsePoolConfigs_Limit(t *testing.T) {
 	// Set more environment variables than the MaxPools limit
 	for i := 0; i <= maxPools; i++ {
-		os.Setenv(fmt.Sprintf("ZPOOL_%d_NAME", i), fmt.Sprintf("pool%d", i))
+		t.Setenv(fmt.Sprintf("ZPOOL_%d_NAME", i), fmt.Sprintf("pool%d", i))
 	}
-	defer func() {
-		for i := 0; i <= maxPools; i++ {
-			os.Unsetenv(fmt.Sprintf("ZPOOL_%d_NAME", i))
-		}
-	}()
 
 	configs := parsePoolConfigs()
 
@@ -853,20 +833,12 @@ func TestCreatePool_SymlinkDuplicateTracking(t *testing.T) {
 }
 
 func TestParseZFSConfigs(t *testing.T) {
-	os.Setenv("ZFS_0_NAME", "tank/fs0")
-	os.Setenv("ZFS_0_MOUNTPOINT", "/mnt/fs0")
-	os.Setenv("ZFS_0_QUOTA", "10G")
+	t.Setenv("ZFS_0_NAME", "tank/fs0")
+	t.Setenv("ZFS_0_MOUNTPOINT", "/mnt/fs0")
+	t.Setenv("ZFS_0_QUOTA", "10G")
 
-	os.Setenv("ZFS_1_NAME", "tank/vol0")
-	os.Setenv("ZFS_1_VOL_SIZE", "20G")
-
-	defer func() {
-		os.Unsetenv("ZFS_0_NAME")
-		os.Unsetenv("ZFS_0_MOUNTPOINT")
-		os.Unsetenv("ZFS_0_QUOTA")
-		os.Unsetenv("ZFS_1_NAME")
-		os.Unsetenv("ZFS_1_VOL_SIZE")
-	}()
+	t.Setenv("ZFS_1_NAME", "tank/vol0")
+	t.Setenv("ZFS_1_VOL_SIZE", "20G")
 
 	configs := parseZFSConfigs()
 
@@ -1009,13 +981,8 @@ func TestCreateDataset_AlreadyExists(t *testing.T) {
 
 func TestParseZFSConfigs_Limit(t *testing.T) {
 	for i := 0; i <= maxDatasets; i++ {
-		os.Setenv(fmt.Sprintf("ZFS_%d_NAME", i), fmt.Sprintf("tank/dataset%d", i))
+		t.Setenv(fmt.Sprintf("ZFS_%d_NAME", i), fmt.Sprintf("tank/dataset%d", i))
 	}
-	defer func() {
-		for i := 0; i <= maxDatasets; i++ {
-			os.Unsetenv(fmt.Sprintf("ZFS_%d_NAME", i))
-		}
-	}()
 
 	configs := parseZFSConfigs()
 
