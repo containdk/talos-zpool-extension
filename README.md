@@ -126,6 +126,7 @@ For each pool `n` (e.g., `0`, `1`, `2`, ...), the following variables are used:
 | `ZPOOL_<n>_ASHIFT` | No | The `ashift` value for this specific pool. If not set, it falls back to the global `ZPOOL_ASHIFT` value. |
 | `ZPOOL_<n>_DISK_<m>_DEV` | No | Explicit block device path for the `m`-th disk of pool `n` (e.g., `ZPOOL_0_DISK_0_DEV=/dev/sda`). |
 | `ZPOOL_<n>_DISK_<m>_MODEL` | No | Dynamic model matching pattern for the `m`-th disk of pool `n` (e.g., `ZPOOL_0_DISK_1_MODEL=Dell DC NVMe CD8*`). Supports wildcards. |
+| `ZPOOL_<n>_DISK_<m>_SIZE` | No | Size condition for the `m`-th disk of pool `n` only (e.g., `ZPOOL_0_DISK_1_SIZE=>=800GB`). Applied together with the pool-wide `ZPOOL_<n>_SIZE_<p>` filters. |
 | `ZPOOL_<n>_SIZE_<p>` | No | Indexed pool-wide mathematical disk size filters (e.g., `ZPOOL_0_SIZE_0=>=900GB`). All conditions must be met (logical AND). |
 
 *Note: For each disk `m` in pool `n`, you must define either `ZPOOL_<n>_DISK_<m>_DEV` or `ZPOOL_<n>_DISK_<m>_MODEL`.*
@@ -168,13 +169,12 @@ This is highly recommended to filter out smaller system/boot disks or target spe
 
 - Conditions are strings containing a comparison operator and a value with **no spaces** in-between (e.g., `ZPOOL_0_SIZE_0=>=900GB`).
 - Multiple filters on the same pool act as a **logical AND** (e.g., `ZPOOL_0_SIZE_0=>=100GB` and `ZPOOL_0_SIZE_1=<=2TB` targets disks between 100 GB and 2 TB).
+- `ZPOOL_<n>_DISK_<m>_SIZE` adds one condition for a single disk, combined with the pool-wide filters (e.g., `ZPOOL_0_DISK_1_SIZE=>=800GB`).
 - **Supported Operators**: `<` (less than), `>` (greater than), `<=` (less than or equal), `>=` (greater than or equal), `=` or `==` (equal to).
 - **Supported Units** (case-insensitive):
   - `B`: Bytes
-  - `K`, `KB`, `KiB`: Kilobytes ($1024^1$)
-  - `M`, `MB`, `MiB`: Megabytes ($1024^2$)
-  - `G`, `GB`, `GiB`: Gigabytes ($1024^3$)
-  - `T`, `TB`, `TiB`: Terabytes ($1024^4$)
+  - `KB`, `MB`, `GB`, `TB`: decimal ($1000^1$ to $1000^4$), matching Talos CEL disk selectors
+  - `K`, `KiB`, `M`, `MiB`, `G`, `GiB`, `T`, `TiB`: binary ($1024^1$ to $1024^4$)
 - Fractional values are fully supported (e.g., `>=1.2TB`).
 
 A global `ZPOOL_ASHIFT` can also be set as a default for all pools.
