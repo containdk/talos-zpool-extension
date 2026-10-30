@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -16,6 +17,12 @@ const (
 	defaultAshift   = "12"
 	maxPools        = 42  // Sanity limit for the number of pools to create.
 	maxDatasets     = 100 // Sanity limit for the number of ZFS datasets/volumes to create.
+)
+
+// Variables so tests can shorten them.
+var (
+	deviceWait = 2 * time.Minute
+	devicePoll = 2 * time.Second
 )
 
 // diskSpec defines a target disk declaration which can be defined by explicit path (dev) or dynamic query (model).
@@ -203,6 +210,16 @@ func createPool(provider zfsProvider, zpoolPath string, config poolConfig, usedD
 		return nil
 	}
 
+	// zfs-service imports pools once at boot. A pool on devices that appear later, such as
+	// Talos encrypted raw volumes, is still on disk but not imported, and create would fail on it.
+	waitForDevices(provider, config)
+	output, err := provider.ImportPool(config.Name, zpoolPath)
+	if err == nil {
+		slog.Info("Imported existing ZFS pool", "pool", config.Name, "output", string(output))
+		return nil
+	}
+	slog.Info("No existing pool to import. Creating it.", "pool", config.Name, "output", strings.TrimSpace(string(output)))
+
 	// Parse size conditions if specified
 	var sizeConds []sizeCondition
 	for _, condStr := range config.SizeFilters {
@@ -296,7 +313,7 @@ func createPool(provider zfsProvider, zpoolPath string, config poolConfig, usedD
 	}
 
 	slog.Info("Running zpool command", "pool", config.Name, "args", strings.Join(args, " "))
-	output, err := provider.CreatePool(zpoolPath, args)
+	output, err = provider.CreatePool(zpoolPath, args)
 	if err != nil {
 		return fmt.Errorf("zpool create command failed: %w. Output: %s", err, string(output))
 	}
@@ -313,6 +330,27 @@ func createPool(provider zfsProvider, zpoolPath string, config poolConfig, usedD
 	}
 
 	return nil
+}
+
+// waitForDevices waits up to deviceWait for every explicit device path of the pool to exist.
+// It gives up rather than fail, because a mirror with a dead member should still import degraded.
+func waitForDevices(provider zfsProvider, config poolConfig) {
+	deadline := time.Now().Add(deviceWait)
+	for _, disk := range config.Disks {
+		if disk.Dev == "" {
+			continue
+		}
+		for {
+			if _, err := provider.EvalSymlinks(disk.Dev); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				slog.Warn("Device did not appear in time. Continuing without it.", "pool", config.Name, "device", disk.Dev, "waited", deviceWait)
+				break
+			}
+			time.Sleep(devicePoll)
+		}
+	}
 }
 
 func getEnv(key, fallback string) string {

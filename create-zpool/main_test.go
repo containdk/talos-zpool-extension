@@ -8,11 +8,13 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 type mockZFSProvider struct {
 	LookPathFunc           func(file string) (string, error)
 	PoolExistsFunc         func(name, zpoolPath string) bool
+	ImportPoolFunc         func(name, zpoolPath string) ([]byte, error)
 	CreatePoolFunc         func(zpoolPath string, args []string) ([]byte, error)
 	GetPoolStatusFunc      func(name, zpoolPath string) ([]byte, error)
 	IsBlockDeviceFunc      func(path string) (bool, error)
@@ -35,6 +37,13 @@ func (m *mockZFSProvider) PoolExists(name, zpoolPath string) bool {
 		return m.PoolExistsFunc(name, zpoolPath)
 	}
 	return false
+}
+
+func (m *mockZFSProvider) ImportPool(name, zpoolPath string) ([]byte, error) {
+	if m.ImportPoolFunc != nil {
+		return m.ImportPoolFunc(name, zpoolPath)
+	}
+	return []byte("cannot import '" + name + "': no such pool available"), errors.New("exit status 1")
 }
 
 func (m *mockZFSProvider) CreatePool(zpoolPath string, args []string) ([]byte, error) {
@@ -326,6 +335,67 @@ func TestCreatePool_MirrorPairs(t *testing.T) {
 	config.Disks = config.Disks[:3]
 	if err := createPool(mockProvider, "/fake/zpool", config, make(map[string]bool)); err == nil {
 		t.Error("createPool() with an odd number of mirror disks should fail")
+	}
+}
+
+func TestCreatePool_ImportsExistingPool(t *testing.T) {
+	var created bool
+	mockProvider := &mockZFSProvider{
+		ImportPoolFunc: func(name, zpoolPath string) ([]byte, error) { return nil, nil },
+		CreatePoolFunc: func(zpoolPath string, args []string) ([]byte, error) {
+			created = true
+			return nil, nil
+		},
+	}
+	config := poolConfig{Name: "csi", Type: "mirror", Disks: []diskSpec{{Dev: "/dev/sda"}, {Dev: "/dev/sdb"}}, Ashift: "12"}
+
+	if err := createPool(mockProvider, "/fake/zpool", config, make(map[string]bool)); err != nil {
+		t.Fatalf("createPool() returned an unexpected error: %v", err)
+	}
+	if created {
+		t.Error("createPool() created a pool that import had already brought up")
+	}
+}
+
+func TestCreatePool_WaitsForDevices(t *testing.T) {
+	deviceWait, devicePoll = 50*time.Millisecond, time.Millisecond
+	t.Cleanup(func() { deviceWait, devicePoll = 2*time.Minute, 2*time.Second })
+
+	// The mapper appears on the third look, after zpool-creator has started.
+	lookups := 0
+	var importedAfter int
+	mockProvider := &mockZFSProvider{
+		EvalSymlinksFunc: func(path string) (string, error) {
+			if path == "/dev/mapper/luks2-r-csi1" {
+				lookups++
+				if lookups < 3 {
+					return "", os.ErrNotExist
+				}
+			}
+			return path, nil
+		},
+		ImportPoolFunc: func(name, zpoolPath string) ([]byte, error) {
+			importedAfter = lookups
+			return nil, nil
+		},
+	}
+	config := poolConfig{Name: "csi", Type: "mirror", Disks: []diskSpec{{Dev: "/dev/mapper/luks2-r-csi0"}, {Dev: "/dev/mapper/luks2-r-csi1"}}, Ashift: "12"}
+
+	if err := createPool(mockProvider, "/fake/zpool", config, make(map[string]bool)); err != nil {
+		t.Fatalf("createPool() returned an unexpected error: %v", err)
+	}
+	if importedAfter != 3 {
+		t.Errorf("import ran after %d lookups of the late device, want 3", importedAfter)
+	}
+
+	// A device that never appears, such as a dead mirror member, must not block the import.
+	lookups = -1 << 30
+	start := time.Now()
+	if err := createPool(mockProvider, "/fake/zpool", config, make(map[string]bool)); err != nil {
+		t.Fatalf("createPool() returned an unexpected error: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("createPool() waited %s for a missing device, want about %s", elapsed, deviceWait)
 	}
 }
 

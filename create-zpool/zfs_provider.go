@@ -133,6 +133,9 @@ type zfsProvider interface {
 	LookPath(file string) (string, error)
 	// PoolExists checks if a ZFS pool with the given name already exists.
 	PoolExists(name, zpoolPath string) bool
+	// ImportPool executes `zpool import -f` for the named pool.
+	// It returns the combined stdout/stderr output and any execution error.
+	ImportPool(name, zpoolPath string) ([]byte, error)
 	// CreatePool executes the `zpool create` command with the given arguments.
 	// It returns the combined stdout/stderr output and any execution error.
 	CreatePool(zpoolPath string, args []string) ([]byte, error)
@@ -189,6 +192,14 @@ func (p *liveZFSProvider) PoolExists(name, zpoolPath string) bool {
 	cmd := exec.Command(zpoolPath, "list", name)
 	// We only care if the command succeeds (exit code 0), not about its output.
 	return cmd.Run() == nil
+}
+
+// ImportPool imports a pool that is on disk but not imported.
+func (p *liveZFSProvider) ImportPool(name, zpoolPath string) ([]byte, error) {
+	// -f matches zfs-service's boot import, which relies on it to recover pools whose shutdown export did not finish.
+	// #nosec G204: Intentionally executing system binary with dynamic pool name
+	cmd := exec.Command(zpoolPath, "import", "-f", name)
+	return cmd.CombinedOutput()
 }
 
 // CreatePool creates a zpool using the `zpool create` command.
