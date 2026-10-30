@@ -18,6 +18,11 @@ The extension provides:
 The service is configured to depend on the `zfs` extension and `configuration` availability.
 It is idempotent; if the pools already exist, the service exits successfully without doing anything.
 
+A pool that is on disk but not imported is imported, not created.
+The `zfs` extension imports pools once at boot, so it misses a pool whose devices appear later, such as Talos encrypted raw volumes under `/dev/mapper`.
+Before importing, the service waits up to two minutes for every `ZPOOL_<n>_DISK_<m>_DEV` path to exist.
+It then imports with whatever devices are present, so a mirror with a dead member still comes up degraded.
+
 ## Usage
 
 ### Prerequisites
