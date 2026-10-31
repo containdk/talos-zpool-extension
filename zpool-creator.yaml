@@ -56,5 +56,10 @@ container:
         - rshared
         - rbind
         - rw
+  # The container root defaults to rprivate, which makes the rshared binds private as well.
+  # Without this, the pools and datasets this service creates stay mounted only in its own
+  # namespace, and the host sees them only after a reboot lets zfs-service import them.
+  security:
+    rootfsPropagation: shared
 restart: untilSuccess
 logToConsole: true
