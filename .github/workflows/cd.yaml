@@ -61,7 +61,7 @@ jobs:
       packages: write
       id-token: write
       attestations: write
-    uses: neticdk/shared-github-actions/.github/workflows/container-cd.yaml@0976f45fbac395c5ed06da8170f3d93f1294dbf6 # v1.0.0
+    uses: neticdk/shared-github-actions/.github/workflows/container-cd.yaml@90e7036c2d38527b2efa8eaf8e0120a6574cc92e # v1.1.0
     with:
       image: ghcr.io/containdk/talos-zpool-extension
       tags: |
@@ -70,6 +70,12 @@ jobs:
       build-args: |
         VERSION=${{ needs.vars.outputs.version }}
         TALOS_VERSION=${{ needs.vars.outputs.talos_version }}
+      # container-cd adds source, url, revision, version and created; these
+      # keep the remaining labels docker/metadata-action used to set.
+      labels: |
+        org.opencontainers.image.title=talos-zpool-extension
+        org.opencontainers.image.description=A Talos extensions for creating a zpool at boot
+        org.opencontainers.image.licenses=MIT
 
   release:
     name: Release
