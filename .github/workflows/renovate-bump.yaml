@@ -8,6 +8,9 @@ on:
     paths:
       - "Makefile"
 
+permissions:
+  contents: read
+
 jobs:
   verify:
     name: Verify TALOS_VERSION bump
@@ -40,18 +43,21 @@ jobs:
             echo "proceed=false" >> "$GITHUB_OUTPUT"
           fi
 
-  publish:
-    name: Publish
+  vars:
+    name: Resolve versions
     needs: verify
     if: needs.verify.outputs.proceed == 'true'
     runs-on: ubuntu-latest
-    permissions:
-      packages: write
+    outputs:
+      version: ${{ steps.vars.outputs.version }}
+      talos_version: ${{ steps.vars.outputs.talos_version }}
+      full_version: ${{ steps.vars.outputs.full_version }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Resolve versions
         id: vars
@@ -66,40 +72,29 @@ jobs:
             echo "full_version=$VERSION-$TALOS_VERSION"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
-        with:
-          platforms: amd64,arm64
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=raw,value=${{ steps.vars.outputs.full_version }}
-            type=raw,value=latest
-
-      - name: Build and push
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            VERSION=${{ steps.vars.outputs.version }}
-            TALOS_VERSION=${{ steps.vars.outputs.talos_version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+  # container-cd.yaml builds the image in a job without an OIDC token, then
+  # signs SLSA build provenance and a cosign signature for its digest in a
+  # separate job.
+  image:
+    name: Publish
+    needs: vars
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    uses: neticdk/shared-github-actions/.github/workflows/container-cd.yaml@90e7036c2d38527b2efa8eaf8e0120a6574cc92e # v1.1.0
+    with:
+      image: ghcr.io/containdk/talos-zpool-extension
+      tags: |
+        ${{ needs.vars.outputs.full_version }}
+        latest
+      build-args: |
+        VERSION=${{ needs.vars.outputs.version }}
+        TALOS_VERSION=${{ needs.vars.outputs.talos_version }}
+      # container-cd adds source, url, revision, version and created; these
+      # keep the remaining labels docker/metadata-action used to set.
+      labels: |
+        org.opencontainers.image.title=talos-zpool-extension
+        org.opencontainers.image.description=A Talos extensions for creating a zpool at boot
+        org.opencontainers.image.licenses=MIT

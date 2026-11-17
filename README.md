@@ -213,3 +213,13 @@ The source code and its Go module files are located in the `create-zpool/` direc
 - `create-zpool/main.go`: The source code for the creator binary.
 - `zpool-creator.yaml`: The Talos service definition.
 - `Dockerfile`: The multi-stage build definition.
+
+## Verifying the image
+
+Release images and the images republished for a new Talos series are built through the shared `container-cd.yaml` workflow in neticdk/shared-github-actions. It signs SLSA build provenance for every image digest, stores it in the registry next to the image, and signs the image with cosign. Verify an image before adding it to an installer:
+
+```sh
+gh attestation verify oci://ghcr.io/containdk/talos-zpool-extension:1.2.0-v1.14 \
+  --repo containdk/talos-zpool-extension \
+  --signer-workflow neticdk/shared-github-actions/.github/workflows/container-cd.yaml
+```
