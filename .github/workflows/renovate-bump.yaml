@@ -83,7 +83,7 @@ jobs:
       packages: write
       id-token: write
       attestations: write
-    uses: neticdk/shared-github-actions/.github/workflows/container-cd.yaml@90e7036c2d38527b2efa8eaf8e0120a6574cc92e # v1.1.0
+    uses: neticdk/shared-github-actions/.github/workflows/container-cd.yaml@714a9565dec5f76ff9d578c0fac0c8f9db5e77de # v1.2.0
     with:
       image: ghcr.io/containdk/talos-zpool-extension
       tags: |
